@@ -1,0 +1,2659 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <title>ASCII Run Game</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            color: white;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 100;
+        }
+        
+        #score {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        #lives {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        #difficulty {
+            position: absolute;
+            top: 60px;
+            right: 20px;
+            font-size: 18px;
+            color: #ffffff;
+        }
+        
+        #combo {
+            position: absolute;
+            top: 60px;
+            left: 20px;
+            font-size: 18px;
+            color: #ffffff;
+        }
+        
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            font-size: 32px;
+            display: none;
+            pointer-events: auto;
+        }
+        
+        #restartBtn {
+            background: #333;
+            color: white;
+            border: 2px solid white;
+            padding: 10px 20px;
+            font-family: 'Courier New', monospace;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        
+        #restartBtn:hover {
+            background: #555;
+        }
+        
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            font-size: 14px;
+            opacity: 0.8;
+        }
+        
+        /* 明るいレインボーアニメーション用キーフレーム */
+        @keyframes bright-rainbow-shift {
+            0% {
+                background-position: 0% 50%;
+            }
+            25% {
+                background-position: 100% 25%;
+            }
+            50% {
+                background-position: 50% 100%;
+            }
+            75% {
+                background-position: 25% 0%;
+            }
+            100% {
+                background-position: 0% 50%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="gameContainer">
+        <div id="ui">
+            <div id="score">SCORE: 0</div>
+            <div id="lives">♥♥♥</div>
+            <div id="difficulty">DIFFICULTY: 1</div>
+            <div id="combo">COMBO: 0</div>
+            <div id="gameOver">
+                <div>GAME OVER</div>
+                <div id="finalScore">FINAL SCORE: 0</div>
+                <button id="restartBtn">RESTART</button>
+            </div>
+            <div id="instructions">
+                SPACE / CLICK / TAP to JUMP
+            </div>
+        </div>
+    </div>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.178.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.178.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { AsciiEffect } from 'three/addons/effects/AsciiEffect.js';
+
+        // ゲームバランス設定
+        const GAME_CONFIG = {
+            // プレイヤー設定
+            PLAYER_LIVES: 3,
+            PLAYER_POSITION_X: -200,  // モバイル最適化：画面左から適度な距離
+            PLAYER_POSITION_Y: -80,
+            PLAYER_JUMP_FORCE: 20,
+            PLAYER_GRAVITY: 1.4,
+            PLAYER_ROTATION_SPEED: 0.3,
+            
+            // ゲーム進行
+            SCROLL_SPEED: 8,
+            SCORE_MULTIPLIER: 10,
+            
+            // 地面描画設定
+            GROUND_SURFACE_CHARS: ['#', '@', '='],
+            GROUND_LAYER1_CHARS: ['█', '▓', '▒'],
+            GROUND_LAYER2_CHARS: ['░', '.', ':'],
+            GROUND_LAYER3_CHARS: ['-', '_', ' '],
+            GROUND_LAYERS: 1,
+            GROUND_PARALLAX_FACTOR: 0.8,
+            GROUND_PATTERN_LENGTH: 20,
+            
+            // 無敵時間
+            DAMAGE_INVINCIBLE_TIME: 1500,
+            
+            // 敵・オブジェクト生成
+            SPAWN_INTERVAL: 3000,
+            
+            // 敵設定
+            ENEMY_SPEED: 3,
+            ENEMY_SIZE: 40,
+            ENEMY_SPAWN_DISTANCE: 800, // プレイヤーから右に800px離れた場所に生成
+            ENEMY_DESTROY_DISTANCE: -400, // プレイヤーから左に400px離れたら削除
+            ENEMY_GROUND_WALKING_COLOR: 0xffffff, // より明るい色（白）に変更
+            ENEMY_DEFEAT_SCORE: 100, // 敵を倒した時のスコア
+            
+            // 難易度上昇システム
+            DIFFICULTY_INCREASE_INTERVAL: 10000, // 10秒ごとに難易度上昇
+            ENEMY_SPEED_INCREASE: 0.5, // 難易度上昇時の敵速度増加量
+            SPAWN_INTERVAL_DECREASE: 200, // 難易度上昇時のスポーン間隔短縮量
+            MIN_SPAWN_INTERVAL: 1000, // 最小スポーン間隔
+            MAX_DIFFICULTY_LEVEL: 10, // 最大難易度レベル
+            
+            // コンボシステム
+            COMBO_MULTIPLIER_BASE: 1.2, // コンボ倍率の基本値
+            COMBO_RESET_TIME: 3000, // コンボリセット時間（3秒）
+            MAX_COMBO_MULTIPLIER: 5.0, // 最大コンボ倍率
+            
+            // エフェクトシステム
+            EXPLOSION_PARTICLE_COUNT: 8, // 爆発パーティクル数
+            EXPLOSION_DURATION: 800, // 爆発エフェクト持続時間
+            PARTICLE_SIZE: 5, // パーティクルサイズ
+            PARTICLE_SPEED: 8, // パーティクル初速度
+            PARTICLE_GRAVITY: 0.3, // パーティクル重力
+            JUMP_PARTICLE_COUNT: 4, // ジャンプ時のパーティクル数
+            STOMP_PARTICLE_COUNT: 6, // 踏み潰し時のパーティクル数
+            
+            // 浮いている地面システム
+            FLOATING_PLATFORM_SPAWN_INTERVAL: 2000, // 2秒間隔で生成（テスト用に短縮）
+            FLOATING_PLATFORM_WIDTH: 200, // プラットフォーム幅
+            FLOATING_PLATFORM_HEIGHT: 20, // プラットフォーム高さ
+            FLOATING_PLATFORM_DEPTH: 40, // プラットフォーム奥行き
+            FLOATING_PLATFORM_MIN_HEIGHT: 20, // 最低高さ（地面からの距離）
+            FLOATING_PLATFORM_MAX_HEIGHT: 150, // 最高高さ
+            FLOATING_PLATFORM_SPAWN_DISTANCE: 800, // 生成距離
+            
+            // 強化された動的背景システム
+            BACKGROUND_PARTICLE_COUNT: 100, // 各レイヤーのパーティクル数（調整）
+            BACKGROUND_SPAWN_DISTANCE: 1200, // 背景パーティクル生成距離
+            BACKGROUND_DESTROY_DISTANCE: -800, // 背景パーティクル削除距離
+            
+            // 背景レイヤー設定（4層に最適化）
+            BACKGROUND_LAYER1_SPEED: 0.3, // 最遠景（最も遅い）- 深宇宙
+            BACKGROUND_LAYER2_SPEED: 0.6, // 遠景 - 星座
+            BACKGROUND_LAYER3_SPEED: 1.0, // 中景 - 雲
+            BACKGROUND_LAYER4_SPEED: 1.4, // 近景 - 流れ星（メイン）
+            
+            // 背景パーティクル文字（層別特化）
+            BACKGROUND_DEEP_SPACE_CHARS: ['·', '•', '∘', '○'], // 深宇宙の微細な星
+            BACKGROUND_CONSTELLATION_CHARS: ['*', '✦', '✧', '⋆', '✶'], // 星座の星
+            BACKGROUND_CLOUD_CHARS: ['=', '-', '~', '≈', '≋'], // 雲の文字
+            BACKGROUND_METEOR_CHARS: ['+', '×', '※', '⋄', '✦', '✧', '⋆'], // 流れ星（強化）
+            
+            // 背景パーティクルサイズ（層別）
+            BACKGROUND_DEEP_SPACE_SIZE: 8, // 深宇宙パーティクルサイズ
+            BACKGROUND_CONSTELLATION_SIZE: 15, // 星座パーティクルサイズ
+            BACKGROUND_CLOUD_SIZE: 20, // 雲パーティクルサイズ（縮小）
+            BACKGROUND_METEOR_SIZE: 15, // 流れ星パーティクルサイズ（拡大）
+            
+            // 上空特別エフェクト
+            UPPER_SKY_DENSITY_MULTIPLIER: 2.5, // 上空の密度倍率
+            CONSTELLATION_PATTERN_COUNT: 8, // 星座パターン数
+            SHOOTING_STAR_INTERVAL: 3000, // 流れ星の間隔
+            SHOOTING_STAR_SPEED: 8, // 流れ星の速度
+            NEBULA_EFFECT_COUNT: 4, // 星雲エフェクト数
+            
+            // 強化された環境エフェクトシステム
+            GRASS_COUNT: 60, // 地面に生える草の数（倍増）
+            GRASS_HEIGHT: 15, // 草の高さ
+            GRASS_SWAY_AMPLITUDE: 3, // 草の揺れ幅
+            GRASS_SWAY_FREQUENCY: 0.03, // 草の揺れ周波数
+            GRASS_SPAWN_DISTANCE: 800, // 草の生成距離
+            GRASS_DESTROY_DISTANCE: -400, // 草の削除距離
+            
+            // 花システム
+            FLOWER_COUNT: 20, // 花の数
+            FLOWER_COLORS: [0xff69b4, 0xff1493, 0xffd700, 0xffa500, 0x9370db], // 花の色
+            FLOWER_SPAWN_DISTANCE: 800, // 花の生成距離
+            FLOWER_DESTROY_DISTANCE: -400, // 花の削除距離
+            
+            // 石・岩システム
+            ROCK_COUNT: 15, // 石の数
+            ROCK_COLORS: [0x696969, 0x778899, 0xa9a9a9, 0x2f4f4f], // 石の色
+            ROCK_SPAWN_DISTANCE: 800, // 石の生成距離
+            ROCK_DESTROY_DISTANCE: -400, // 石の削除距離
+            
+            // 地面装飾パターン
+            GROUND_DECORATION_DENSITY: 1.5, // 地面装飾密度倍率
+            GROUND_PATTERN_VARIATION: 8, // 地面パターンバリエーション数
+            
+            // 雲の流れエフェクト
+            CLOUD_FLOW_AMPLITUDE: 10, // 雲の縦方向の流れ幅
+            CLOUD_FLOW_FREQUENCY: 0.01, // 雲の流れ周波数
+            
+            // 時間ベースアニメーション
+            TIME_BASED_ANIMATION_SPEED: 0.001, // 時間ベースアニメーションの速度
+            ENVIRONMENT_WAVE_AMPLITUDE: 5, // 環境全体の波動振幅
+            
+            // 高度なエフェクトシステム
+            GROUND_REACTION_PARTICLE_COUNT: 6, // 地面反応パーティクル数
+            GROUND_REACTION_PARTICLE_SIZE: 3, // 地面反応パーティクルサイズ
+            GROUND_REACTION_SPEED: 4, // 地面反応パーティクル速度
+            
+            // プレイヤー変形エフェクト
+            PLAYER_DEFORM_AMPLITUDE: 0.15, // プレイヤー変形振幅
+            PLAYER_DEFORM_SPEED: 0.3, // プレイヤー変形速度
+            PLAYER_LANDING_SQUASH: 0.8, // 着地時の縦方向圧縮率
+            PLAYER_JUMP_STRETCH: 1.2, // ジャンプ時の縦方向伸長率
+            
+            // コンボシステム強化
+            COMBO_BACKGROUND_SPEED_MULTIPLIER: 1.5, // 高コンボ時の背景速度倍率
+            COMBO_PARTICLE_THRESHOLD: 5, // 特別パーティクルが出現するコンボ数
+            COMBO_SPECIAL_PARTICLE_COUNT: 3, // 特別パーティクル数
+            COMBO_SPECIAL_PARTICLE_SIZE: 8, // 特別パーティクルサイズ
+            COMBO_CAMERA_SHAKE_AMPLITUDE: 2, // 高コンボ時のカメラ振動振幅
+            COMBO_INTENSE_THRESHOLD: 10, // 激しいエフェクトが始まるコンボ数
+            
+            // 動的難易度調整システム
+            ADVANCED_PATTERN_THRESHOLD: 5, // 高度なパターンが始まる難易度レベル
+            WAVE_PATTERN_INTERVAL: 8000, // 波状攻撃パターンの間隔
+            FORMATION_PATTERN_INTERVAL: 12000, // フォーメーション攻撃の間隔
+            SKILL_ANALYSIS_INTERVAL: 15000, // プレイヤースキル分析間隔
+            ADAPTIVE_DIFFICULTY_SPEED: 0.1, // 難易度適応速度
+            MAX_ADAPTIVE_MULTIPLIER: 2.0, // 最大適応倍率
+            
+            FLOATING_PLATFORM_DESTROY_DISTANCE: -400, // 削除距離
+            
+            // 浮いている敵システム
+            FLOATING_ENEMY_SPAWN_INTERVAL: 5000, // 5秒間隔で生成
+            FLOATING_ENEMY_SIZE: 30, // 浮いている敵のサイズ
+            FLOATING_ENEMY_SPEED: 2.5, // 浮いている敵の移動速度
+            FLOATING_ENEMY_WAVE_AMPLITUDE: 40, // サイン波の振幅（上下移動の幅）
+            FLOATING_ENEMY_WAVE_FREQUENCY: 0.02, // サイン波の周波数（振動の速さ）
+            FLOATING_ENEMY_MIN_HEIGHT: 30, // 最低高さ（地面からの距離）
+            FLOATING_ENEMY_MAX_HEIGHT: 120, // 最高高さ
+            FLOATING_ENEMY_COLOR: 0xff6600, // オレンジ色で視認性確保
+            
+            // 高高度浮遊敵システム
+            HIGH_FLOATING_ENEMY_SPAWN_INTERVAL: 8000, // 8秒間隔で生成（より希少）
+            HIGH_FLOATING_ENEMY_SIZE: 35, // 高高度浮遊敵のサイズ（少し大きめ）
+            HIGH_FLOATING_ENEMY_SPEED: 2.0, // 高高度浮遊敵の移動速度（少し遅め）
+            HIGH_FLOATING_ENEMY_WAVE_AMPLITUDE: 60, // より大きな上下移動
+            HIGH_FLOATING_ENEMY_WAVE_FREQUENCY: 0.015, // より緩やかな振動
+            HIGH_FLOATING_ENEMY_MIN_HEIGHT: 180, // 画面中央やや上（地面から180px）
+            HIGH_FLOATING_ENEMY_MAX_HEIGHT: 250, // 最高高さ（地面から250px）
+            HIGH_FLOATING_ENEMY_COLOR: 0x9966ff, // 紫色で特別感を演出
+            HIGH_FLOATING_ENEMY_SPAWN_CHANCE: 0.3, // 30%の確率で出現（希少価値）
+            
+            // プラットフォーム上の敵システム
+            PLATFORM_ENEMY_SPAWN_CHANCE: 0.4, // 40%の確率でプラットフォーム上に敵を配置
+            PLATFORM_ENEMY_SIZE: 25, // プラットフォーム上の敵のサイズ
+            PLATFORM_ENEMY_COLOR: 0xff3366, // ピンク色で視認性確保
+            PLATFORM_ENEMY_PATROL_SPEED: 1.0, // プラットフォーム上の敵の巡回速度
+            PLATFORM_ENEMY_PATROL_RANGE: 80, // 巡回範囲（プラットフォーム幅の40%）
+            PLATFORM_ENEMY_BOUNCE_HEIGHT: 15, // 軽くバウンドする高さ
+            
+            // アニメーション設定
+            ANIMATION_SPEED: 0.05,
+            
+            // カメラ設定
+            CAMERA_POSITION_X: 0,
+            CAMERA_POSITION_Y: 0,
+            CAMERA_POSITION_Z: 500
+        };
+
+        // グローバル変数
+        let camera, scene, renderer, effect;
+        let player;
+        let groundLayers = [];
+        let floatingPlatforms = []; // 浮いている地面配列
+        let enemies = []; // 敵配列
+        let particles = []; // パーティクル配列
+        let backgroundParticles = []; // 背景パーティクル配列（5層）
+        let grassElements = []; // 草要素配列
+        let flowerElements = []; // 花要素配列
+        let rockElements = []; // 石要素配列
+        let constellationPatterns = []; // 星座パターン配列
+        let shootingStars = []; // 流れ星配列
+        let lastShootingStarTime = 0; // 流れ星スポーンタイマー
+        let globalOffset = 0; // グローバルオフセット変数
+        let gameTime = 0; // ゲーム時間（環境エフェクト用）
+        let lastEnemySpawnTime = 0; // 敵スポーンタイマー
+        let lastPlatformSpawnTime = 0; // 浮いている地面スポーンタイマー
+        let lastFloatingEnemySpawnTime = 0; // 浮いている敵スポーンタイマー
+        let lastHighFloatingEnemySpawnTime = 0; // 高高度浮遊敵スポーンタイマー
+        let lastWavePatternTime = 0; // 波状攻撃パターンタイマー
+        let lastFormationPatternTime = 0; // フォーメーション攻撃タイマー
+        let lastSkillAnalysisTime = 0; // スキル分析タイマー
+        let gameState = {
+            isRunning: true,
+            score: 0,
+            lives: GAME_CONFIG.PLAYER_LIVES,
+            isInvincible: false,
+            invincibleTime: 0,
+            // 難易度システム
+            difficultyLevel: 1,
+            lastDifficultyIncrease: 0,
+            currentEnemySpeed: GAME_CONFIG.ENEMY_SPEED,
+            currentSpawnInterval: GAME_CONFIG.SPAWN_INTERVAL,
+            // コンボシステム
+            combo: 0,
+            comboMultiplier: 1.0,
+            lastEnemyDefeatTime: 0,
+            // 動的難易度調整システム
+            playerSkillLevel: 1.0, // プレイヤースキルレベル
+            adaptiveDifficultyMultiplier: 1.0, // 適応難易度倍率
+            totalEnemiesDefeated: 0, // 倒した敵の総数
+            totalJumps: 0, // 総ジャンプ数
+            totalDamagesTaken: 0, // 受けたダメージ総数
+            averageCombo: 0, // 平均コンボ数
+            maxCombo: 0 // 最大コンボ数
+        };
+        let playerState = {
+            velocityY: 0,
+            isGrounded: false,
+            jumpCount: 0,
+            maxJumps: 2,
+            // 高度なエフェクト用
+            deformTime: 0,
+            isLanding: false,
+            landingTime: 0,
+            isJumping: false,
+            jumpTime: 0
+        };
+
+        // UI要素
+        const scoreElement = document.getElementById('score');
+        const livesElement = document.getElementById('lives');
+        const difficultyElement = document.getElementById('difficulty');
+        const comboElement = document.getElementById('combo');
+        const gameOverElement = document.getElementById('gameOver');
+        const finalScoreElement = document.getElementById('finalScore');
+        const restartBtn = document.getElementById('restartBtn');
+
+        const start = Date.now();
+
+        init();
+
+        function init() {
+            // カメラ設定（参照ファイルと同じPerspectiveCamera）
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 1, 1000);
+            camera.position.y = 150;
+            camera.position.z = 500;
+
+            // シーン作成
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0, 0, 0);
+
+            // ライティング設定（参照ファイルと同じ）
+            const pointLight1 = new THREE.PointLight(0xffffff, 3, 0, 0);
+            pointLight1.position.set(500, 500, 500);
+            scene.add(pointLight1);
+
+            const pointLight2 = new THREE.PointLight(0xffffff, 1, 0, 0);
+            pointLight2.position.set(-500, -500, -500);
+            scene.add(pointLight2);
+
+            // レンダラー・AsciiEffect設定
+            renderer = new THREE.WebGLRenderer();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+            effect = new AsciiEffect(renderer, ' .:-+*=%@#', { invert: true });
+            effect.setSize(window.innerWidth, window.innerHeight);
+            
+            // 明るいレインボーグラデーション設定
+            effect.domElement.style.background = 'black';
+            effect.domElement.style.color = 'transparent';
+            effect.domElement.style.backgroundClip = 'text';
+            effect.domElement.style.webkitBackgroundClip = 'text';
+            effect.domElement.style.webkitTextFillColor = 'transparent';
+            
+            effect.domElement.style.backgroundImage = `
+                linear-gradient(
+                    45deg,
+                    #ffffff 0%,
+                    #ffffff 15%,
+                    #ffffff 30%,
+                    #ffccff 40%,
+                    #ff99dd 50%,
+                    #ffaa77 60%,
+                    #ffff77 70%,
+                    #aaffaa 80%,
+                    #77ddff 90%,
+                    #ffffff 100%
+                )
+            `;
+            effect.domElement.style.backgroundSize = '200% 200%';
+            effect.domElement.style.animation = 'bright-rainbow-shift 3s ease-in-out infinite';
+            
+            // 文字サイズを固定してプレイヤーサイズの一貫性を保つ
+            effect.domElement.style.fontSize = '10px';
+            effect.domElement.style.lineHeight = '10px';
+
+            // effect.domElementをDOMに追加
+            document.getElementById('gameContainer').appendChild(effect.domElement);
+
+            // プレイヤー作成
+            createPlayer();
+
+            // 地面システム作成
+            createGroundSystem();
+
+            // 浮いている地面システム初期化
+            initFloatingPlatforms();
+
+            // 背景パーティクルシステム初期化
+            initBackgroundParticles();
+
+            // 環境エフェクトシステム初期化
+            initEnvironmentEffects();
+
+            // イベントリスナー設定
+            setupEventListeners();
+
+            // アニメーションループ開始
+            renderer.setAnimationLoop(animate);
+        }
+
+        function createPlayer() {
+            // プレイヤーサイズを1/2に縮小
+            const geometry = new THREE.SphereGeometry(25, 20, 10);
+            const material = new THREE.MeshPhongMaterial({ 
+                color: 0x00ff00,
+                flatShading: true 
+            });
+            player = new THREE.Mesh(geometry, material);
+            player.position.set(
+                GAME_CONFIG.PLAYER_POSITION_X, 
+                GAME_CONFIG.PLAYER_POSITION_Y, 
+                0
+            );
+            scene.add(player);
+        }
+
+        function createGroundSystem() {
+            // 3つの地面セグメントで確実にシームレスにする
+            for (let layer = 0; layer < GAME_CONFIG.GROUND_LAYERS; layer++) {
+                // 3つの地面セグメントを作成
+                for (let segment = 0; segment < 3; segment++) {
+                    const groundLayer = createGroundLayer(layer, segment);
+                    // 初期位置を設定（セグメント情報を保存）
+                    groundLayer.userData = { 
+                        segmentIndex: segment,
+                        initialX: (segment - 1) * 6000 // -6000, 0, 6000
+                    };
+                    groundLayer.position.x = groundLayer.userData.initialX;
+                    groundLayers.push(groundLayer);
+                    scene.add(groundLayer);
+                }
+            }
+        }
+
+        function createGroundLayer(layerIndex, segmentIndex = 0) {
+            // 地面グループを作成
+            const groundGroup = new THREE.Group();
+            
+            // より大きなベース地面（6000幅に拡張）
+            const baseGeometry = new THREE.PlaneGeometry(6000, 50);
+            const baseMaterial = new THREE.MeshBasicMaterial({ color: 0xe0e0e0 });
+            const basePlane = new THREE.Mesh(baseGeometry, baseMaterial);
+            basePlane.position.set(0, -150, 0);
+            basePlane.rotation.x = -Math.PI / 2;
+            groundGroup.add(basePlane);
+            
+            // 地面にバリエーション要素を追加（異なる輝度で文字種を変える）
+            const variations = [
+                { color: 0xffffff, size: 10 },  // # (最も明るい)
+                { color: 0xf0f0f0, size: 8 },   // # (明るい)
+                { color: 0xe0e0e0, size: 6 },   // @ (中間)
+                { color: 0xd0d0d0, size: 5 },   // @ (やや暗い)
+                { color: 0xc0c0c0, size: 4 },   // = (暗い)
+                { color: 0xb0b0b0, size: 3 }    // = (最も暗い)
+            ];
+            
+            // セグメント固有のランダムシードを使用（一貫性のあるパターン生成）
+            const segmentSeed = segmentIndex * 1000;
+            
+            // より多くの要素を配置（密度アップ＆幅拡張対応）
+            for (let i = 0; i < 450; i++) { // 150 * 3 = 450
+                // セグメント固有のランダム値
+                const randomValue = (segmentSeed + i * 17) % 1000 / 1000; // 0-1の値
+                const variation = variations[Math.floor(randomValue * variations.length)];
+                
+                const geometry = new THREE.BoxGeometry(variation.size, variation.size, variation.size);
+                const material = new THREE.MeshBasicMaterial({ color: variation.color });
+                const box = new THREE.Mesh(geometry, material);
+                
+                // セグメント内での配置
+                const localX = ((segmentSeed + i * 23) % 5800 / 5800 - 0.5) * 5800; // -2900 to 2900
+                box.position.set(
+                    localX,     // ローカル位置のみ（グループ全体の位置は外で設定）
+                    -145 + ((segmentSeed + i * 31) % 100 / 100) * 10,  // Y座標
+                    ((segmentSeed + i * 37) % 400 / 400 - 0.5) * 40    // Z座標 -20 to 20
+                );
+                
+                groundGroup.add(box);
+            }
+            
+            return groundGroup;
+        }
+
+        // 浮いている地面システム初期化
+        function initFloatingPlatforms() {
+            // 初期状態では空（ゲーム中に動的生成）
+        }
+
+        // 強化された背景パーティクルシステム初期化
+        function initBackgroundParticles() {
+            // 4層の背景パーティクル配列を初期化
+            backgroundParticles = [[], [], [], []];
+            
+            // 各層に初期パーティクルを配置
+            for (let layer = 0; layer < 4; layer++) {
+                // 上空層（0, 1）は密度を高く、流れ星層（3）は特に密度を高く
+                let particleCount;
+                if (layer <= 1) {
+                    particleCount = Math.floor(GAME_CONFIG.BACKGROUND_PARTICLE_COUNT * GAME_CONFIG.UPPER_SKY_DENSITY_MULTIPLIER);
+                } else if (layer === 3) {
+                    // 流れ星層は特に密度を高く（2倍）
+                    particleCount = Math.floor(GAME_CONFIG.BACKGROUND_PARTICLE_COUNT * 2.0);
+                } else {
+                    particleCount = GAME_CONFIG.BACKGROUND_PARTICLE_COUNT;
+                }
+                    
+                for (let i = 0; i < particleCount; i++) {
+                    createBackgroundParticle(layer);
+                }
+            }
+            
+            // 特別エフェクトの初期化
+            initConstellationPatterns();
+            initShootingStars();
+        }
+
+        // 強化された背景パーティクル作成関数
+        function createBackgroundParticle(layer, x = null) {
+            // レイヤーに応じた設定
+            const speeds = [
+                GAME_CONFIG.BACKGROUND_LAYER1_SPEED, // 深宇宙
+                GAME_CONFIG.BACKGROUND_LAYER2_SPEED, // 星座
+                GAME_CONFIG.BACKGROUND_LAYER3_SPEED, // 雲
+                GAME_CONFIG.BACKGROUND_LAYER4_SPEED  // 流れ星（メイン）
+            ];
+            
+            // レイヤー別のパーティクルタイプと文字選択
+            let particleType, chars, size, color;
+            
+            switch(layer) {
+                case 0: // 深宇宙層
+                    particleType = 'deep_space';
+                    chars = GAME_CONFIG.BACKGROUND_DEEP_SPACE_CHARS;
+                    size = GAME_CONFIG.BACKGROUND_DEEP_SPACE_SIZE;
+                    color = 0x9999ff; // 薄い青
+                    break;
+                case 1: // 星座層
+                    particleType = 'constellation';
+                    chars = GAME_CONFIG.BACKGROUND_CONSTELLATION_CHARS;
+                    size = GAME_CONFIG.BACKGROUND_CONSTELLATION_SIZE;
+                    color = 0xffffaa; // 薄い黄色
+                    break;
+                case 2: // 雲層
+                    particleType = 'cloud';
+                    chars = GAME_CONFIG.BACKGROUND_CLOUD_CHARS;
+                    size = GAME_CONFIG.BACKGROUND_CLOUD_SIZE;
+                    color = 0xffffff; // 白
+                    break;
+                case 3: // 流れ星層（メイン美麗エフェクト）
+                    particleType = 'meteor';
+                    chars = GAME_CONFIG.BACKGROUND_METEOR_CHARS;
+                    size = GAME_CONFIG.BACKGROUND_METEOR_SIZE;
+                    color = 0xffddff; // より明るいピンク
+                    break;
+            }
+            
+            const selectedChar = chars[Math.floor(Math.random() * chars.length)];
+            
+            // レイヤー別の形状生成
+            let geometry;
+            switch(particleType) {
+                case 'deep_space':
+                    geometry = new THREE.SphereGeometry(size * 0.2, 3, 3);
+                    break;
+                case 'constellation':
+                    geometry = new THREE.SphereGeometry(size * 0.4, 4, 4);
+                    break;
+                case 'cloud':
+                    geometry = new THREE.BoxGeometry(size * 1.5, size * 0.4, size * 0.8);
+                    break;
+                case 'meteor':
+                    geometry = new THREE.ConeGeometry(size * 0.4, size * 1.5, 5);
+                    break;
+            }
+            
+            // レイヤーに応じた透明度と色（浮いている地面との競合を避ける）
+            const opacities = [0.15, 0.3, 0.4, 0.6]; // 全体的に控えめに、流れ星層のみ明るく
+            const material = new THREE.MeshBasicMaterial({ 
+                color: color,
+                transparent: true,
+                opacity: opacities[layer]
+            });
+            
+            const particle = new THREE.Mesh(geometry, material);
+            
+            // 位置設定（上空により多く配置）
+            const spawnX = x !== null ? x : 
+                GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.BACKGROUND_SPAWN_DISTANCE + 
+                (Math.random() - 0.5) * 2400;
+            
+            // Y座標の範囲を層別に調整（上空を重視）
+            let yRange;
+            switch(layer) {
+                case 0: // 深宇宙 - 最上部
+                    yRange = { min: 100, max: 300 };
+                    break;
+                case 1: // 星座 - 上部
+                    yRange = { min: 50, max: 200 };
+                    break;
+                case 2: // 雲 - 中上部
+                    yRange = { min: -50, max: 150 };
+                    break;
+                case 3: // 流れ星 - 全域（メイン）
+                    yRange = { min: -50, max: 250 }; // より上空に重点
+                    break;
+            }
+            
+            particle.position.set(
+                spawnX,
+                yRange.min + Math.random() * (yRange.max - yRange.min),
+                -150 + Math.random() * 300
+            );
+            
+            // パーティクルのメタデータ
+            particle.userData = {
+                type: particleType,
+                layer: layer,
+                speed: speeds[layer],
+                rotationSpeed: (Math.random() - 0.5) * 0.03,
+                pulsePhase: Math.random() * Math.PI * 2, // 脈動位相
+                originalY: particle.position.y
+            };
+            
+            // パーティクルの有効性チェック
+            if (particle && particle.geometry && particle.material) {
+                scene.add(particle);
+                backgroundParticles[layer].push(particle);
+                return particle;
+            } else {
+                console.warn('Invalid particle created, skipping');
+                return null;
+            }
+        }
+
+        // 強化された背景パーティクルの更新処理
+        function updateBackgroundParticles(deltaTime) {
+            for (let layer = 0; layer < 4; layer++) {
+                for (let i = backgroundParticles[layer].length - 1; i >= 0; i--) {
+                    const particle = backgroundParticles[layer][i];
+                    
+                    // パーティクルの移動（左に移動）
+                    particle.position.x -= particle.userData.speed;
+                    
+                    // レイヤー別の特別なアニメーション
+                    switch(particle.userData.type) {
+                        case 'deep_space':
+                            // 深宇宙：ゆっくりした脈動
+                            particle.userData.pulsePhase += 0.01;
+                            const deepPulse = 1.0 + Math.sin(particle.userData.pulsePhase) * 0.2;
+                            particle.scale.set(deepPulse, deepPulse, deepPulse);
+                            particle.rotation.y += particle.userData.rotationSpeed * 0.3;
+                            break;
+                            
+                        case 'constellation':
+                            // 星座：きらめき効果
+                            particle.userData.pulsePhase += 0.05;
+                            const twinkle = 0.7 + Math.sin(particle.userData.pulsePhase) * 0.3;
+                            particle.material.opacity = twinkle * 0.4;
+                            particle.rotation.z += particle.userData.rotationSpeed;
+                            break;
+                            
+                        case 'cloud':
+                            // 雲：流れるような動き
+                            particle.userData.pulsePhase += 0.02;
+                            const cloudFlow = Math.sin(particle.userData.pulsePhase) * 10;
+                            particle.position.y = particle.userData.originalY + cloudFlow;
+                            particle.rotation.x += particle.userData.rotationSpeed * 0.5;
+                            break;
+                            
+                        case 'meteor':
+                            // 流れ星：美麗な動きと光のエフェクト
+                            particle.rotation.z += particle.userData.rotationSpeed * 3;
+                            particle.rotation.x += particle.userData.rotationSpeed * 2;
+                            particle.rotation.y += particle.userData.rotationSpeed * 1.5;
+                            
+                            // より美しい光のパルス
+                            particle.userData.pulsePhase += 0.15;
+                            const meteorPulse = 0.6 + Math.sin(particle.userData.pulsePhase) * 0.4;
+                            particle.material.opacity = meteorPulse * 0.7;
+                            
+                            // 軌道に沿った微細な動き
+                            const trail = Math.sin(particle.userData.pulsePhase * 0.5) * 3;
+                            particle.position.y = particle.userData.originalY + trail;
+                            
+                            // スケール変化で輝きを表現
+                            const sparkle = 1.0 + Math.sin(particle.userData.pulsePhase * 1.3) * 0.3;
+                            particle.scale.set(sparkle, sparkle, sparkle);
+                            break;
+                    }
+                    
+                    // 画面外に出たパーティクルを削除して新しいものを生成
+                    if (particle.position.x < GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.BACKGROUND_DESTROY_DISTANCE) {
+                        scene.remove(particle);
+                        backgroundParticles[layer].splice(i, 1);
+                        
+                        // 新しいパーティクルを右端に生成
+                        createBackgroundParticle(layer, GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.BACKGROUND_SPAWN_DISTANCE);
+                    }
+                }
+            }
+            
+            // 特別エフェクトの更新
+            updateShootingStars(deltaTime);
+            updateConstellationPatterns(deltaTime);
+        }
+
+        // 星座パターン初期化
+        function initConstellationPatterns() {
+            constellationPatterns = [];
+            
+            // 星座パターンを生成
+            for (let i = 0; i < GAME_CONFIG.CONSTELLATION_PATTERN_COUNT; i++) {
+                createConstellationPattern();
+            }
+        }
+
+        // 星座パターン作成
+        function createConstellationPattern() {
+            const pattern = {
+                stars: [],
+                centerX: GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.BACKGROUND_SPAWN_DISTANCE + Math.random() * 800,
+                centerY: 100 + Math.random() * 150, // 上空に配置
+                centerZ: -50 + Math.random() * 100,
+                rotationSpeed: (Math.random() - 0.5) * 0.01,
+                pulsePhase: Math.random() * Math.PI * 2
+            };
+
+            // 星座の星を配置（3-7個の星で構成）
+            const starCount = 3 + Math.floor(Math.random() * 5);
+            for (let i = 0; i < starCount; i++) {
+                const angle = (i / starCount) * Math.PI * 2;
+                const radius = 30 + Math.random() * 40;
+                
+                const geometry = new THREE.SphereGeometry(3, 6, 6);
+                const material = new THREE.MeshBasicMaterial({ 
+                    color: 0xffffcc,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const star = new THREE.Mesh(geometry, material);
+                
+                star.position.set(
+                    pattern.centerX + Math.cos(angle) * radius,
+                    pattern.centerY + Math.sin(angle) * radius * 0.6,
+                    pattern.centerZ + (Math.random() - 0.5) * 20
+                );
+                
+                star.userData = {
+                    type: 'constellation_star',
+                    originalOpacity: 0.8,
+                    twinklePhase: Math.random() * Math.PI * 2
+                };
+                
+                scene.add(star);
+                pattern.stars.push(star);
+            }
+            
+            constellationPatterns.push(pattern);
+            return pattern;
+        }
+
+        // 星座パターンの更新
+        function updateConstellationPatterns(deltaTime) {
+            for (let i = constellationPatterns.length - 1; i >= 0; i--) {
+                const pattern = constellationPatterns[i];
+                
+                // パターン全体の移動
+                pattern.centerX -= GAME_CONFIG.BACKGROUND_LAYER2_SPEED;
+                
+                // 星座の回転と脈動
+                pattern.pulsePhase += 0.02;
+                const pulseIntensity = 0.8 + Math.sin(pattern.pulsePhase) * 0.2;
+                
+                // 各星の更新
+                for (let j = pattern.stars.length - 1; j >= 0; j--) {
+                    const star = pattern.stars[j];
+                    
+                    // 星の移動
+                    star.position.x -= GAME_CONFIG.BACKGROUND_LAYER2_SPEED;
+                    
+                    // きらめきエフェクト
+                    star.userData.twinklePhase += 0.08;
+                    const twinkle = 0.5 + Math.sin(star.userData.twinklePhase) * 0.5;
+                    star.material.opacity = star.userData.originalOpacity * twinkle * pulseIntensity;
+                    
+                    // 微細な回転
+                    star.rotation.z += pattern.rotationSpeed;
+                }
+                
+                // 画面外に出たパターンを削除
+                if (pattern.centerX < GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.BACKGROUND_DESTROY_DISTANCE) {
+                    // 星を削除
+                    for (const star of pattern.stars) {
+                        scene.remove(star);
+                    }
+                    constellationPatterns.splice(i, 1);
+                    
+                    // 新しい星座パターンを生成
+                    createConstellationPattern();
+                }
+            }
+        }
+
+        // 流れ星システム初期化
+        function initShootingStars() {
+            shootingStars = [];
+            lastShootingStarTime = 0;
+        }
+
+        // 流れ星作成
+        function createShootingStar() {
+            const geometry = new THREE.ConeGeometry(4, 20, 4);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: 0xffff88,
+                transparent: true,
+                opacity: 0.9
+            });
+            const star = new THREE.Mesh(geometry, material);
+            
+            // 画面右上から左下に向かって流れる
+            star.position.set(
+                GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.BACKGROUND_SPAWN_DISTANCE + 200,
+                200 + Math.random() * 100, // 高い位置から
+                -100 + Math.random() * 200
+            );
+            
+            // 流れる方向を設定
+            const angle = -Math.PI / 6 + (Math.random() - 0.5) * Math.PI / 12; // 右上から左下
+            star.rotation.z = angle;
+            
+            star.userData = {
+                type: 'shooting_star',
+                velocity: new THREE.Vector3(
+                    -GAME_CONFIG.SHOOTING_STAR_SPEED,
+                    -GAME_CONFIG.SHOOTING_STAR_SPEED * 0.3,
+                    0
+                ),
+                trail: [],
+                life: 1.0,
+                fadeSpeed: 0.01
+            };
+            
+            scene.add(star);
+            shootingStars.push(star);
+            
+            return star;
+        }
+
+        // 流れ星の更新
+        function updateShootingStars(deltaTime) {
+            const currentTime = Date.now();
+            
+            // 新しい流れ星の生成
+            if (currentTime - lastShootingStarTime > GAME_CONFIG.SHOOTING_STAR_INTERVAL) {
+                if (Math.random() < 0.3) { // 30%の確率で生成
+                    createShootingStar();
+                }
+                lastShootingStarTime = currentTime;
+            }
+            
+            // 既存の流れ星の更新
+            for (let i = shootingStars.length - 1; i >= 0; i--) {
+                const star = shootingStars[i];
+                
+                // 移動
+                star.position.add(star.userData.velocity);
+                
+                // フェードアウト
+                star.userData.life -= star.userData.fadeSpeed;
+                star.material.opacity = star.userData.life * 0.9;
+                
+                // 回転
+                star.rotation.x += 0.1;
+                
+                // 削除条件
+                if (star.userData.life <= 0 || 
+                    star.position.x < GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.BACKGROUND_DESTROY_DISTANCE ||
+                    star.position.y < -200) {
+                    scene.remove(star);
+                    shootingStars.splice(i, 1);
+                }
+            }
+        }
+
+        // 強化された環境エフェクトシステム初期化
+        function initEnvironmentEffects() {
+            // 草要素の初期化
+            grassElements = [];
+            flowerElements = [];
+            rockElements = [];
+            
+            // 初期の草を配置
+            for (let i = 0; i < GAME_CONFIG.GRASS_COUNT; i++) {
+                createGrassElement();
+            }
+            
+            // 初期の花を配置
+            for (let i = 0; i < GAME_CONFIG.FLOWER_COUNT; i++) {
+                createFlowerElement();
+            }
+            
+            // 初期の石を配置
+            for (let i = 0; i < GAME_CONFIG.ROCK_COUNT; i++) {
+                createRockElement();
+            }
+        }
+
+        // 草要素作成関数
+        function createGrassElement(x = null) {
+            // 草の形状（細長い箱）
+            const geometry = new THREE.BoxGeometry(2, GAME_CONFIG.GRASS_HEIGHT, 2);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: 0x00ff00, // 緑色
+                transparent: true,
+                opacity: 0.7
+            });
+            
+            const grass = new THREE.Mesh(geometry, material);
+            
+            // 位置設定
+            const spawnX = x !== null ? x : 
+                GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.GRASS_SPAWN_DISTANCE + 
+                (Math.random() - 0.5) * 1600; // ランダムな初期位置
+            
+            grass.position.set(
+                spawnX,
+                -90 + GAME_CONFIG.GRASS_HEIGHT / 2, // 地面の上に配置
+                (Math.random() - 0.5) * 80 // Z方向にランダム配置
+            );
+            
+            // 草のメタデータ
+            grass.userData = {
+                type: 'grass',
+                baseX: grass.position.x,
+                baseRotation: 0,
+                swayPhase: Math.random() * Math.PI * 2 // 個別の揺れ位相
+            };
+            
+            scene.add(grass);
+            grassElements.push(grass);
+            
+            return grass;
+        }
+
+        // 花要素作成関数
+        function createFlowerElement(x = null) {
+            // 花の形状（小さな球体 + 茎）
+            const flowerGroup = new THREE.Group();
+            
+            // 花の部分
+            const flowerGeometry = new THREE.SphereGeometry(4, 6, 6);
+            const flowerColor = GAME_CONFIG.FLOWER_COLORS[Math.floor(Math.random() * GAME_CONFIG.FLOWER_COLORS.length)];
+            const flowerMaterial = new THREE.MeshBasicMaterial({ 
+                color: flowerColor,
+                transparent: true,
+                opacity: 0.9
+            });
+            const flower = new THREE.Mesh(flowerGeometry, flowerMaterial);
+            flower.position.y = 8; // 茎の上に配置
+            
+            // 茎の部分
+            const stemGeometry = new THREE.CylinderGeometry(0.5, 1, 10, 4);
+            const stemMaterial = new THREE.MeshBasicMaterial({ 
+                color: 0x228b22, // 濃い緑
+                transparent: true,
+                opacity: 0.8
+            });
+            const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+            stem.position.y = 5;
+            
+            flowerGroup.add(flower);
+            flowerGroup.add(stem);
+            
+            // 位置設定
+            const spawnX = x !== null ? x : 
+                GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.FLOWER_SPAWN_DISTANCE + 
+                (Math.random() - 0.5) * 1600;
+            
+            flowerGroup.position.set(
+                spawnX,
+                -90, // 地面の上に配置
+                (Math.random() - 0.5) * 60 // Z方向にランダム配置
+            );
+            
+            // 花のメタデータ
+            flowerGroup.userData = {
+                type: 'flower',
+                swayPhase: Math.random() * Math.PI * 2,
+                pulsePhase: Math.random() * Math.PI * 2,
+                originalColor: flowerColor
+            };
+            
+            scene.add(flowerGroup);
+            flowerElements.push(flowerGroup);
+            
+            return flowerGroup;
+        }
+
+        // 石要素作成関数
+        function createRockElement(x = null) {
+            // 石の形状（不規則な形にするため複数の球体を組み合わせ）
+            const rockGroup = new THREE.Group();
+            
+            const rockColor = GAME_CONFIG.ROCK_COLORS[Math.floor(Math.random() * GAME_CONFIG.ROCK_COLORS.length)];
+            const rockCount = 1 + Math.floor(Math.random() * 3); // 1-3個の石
+            
+            for (let i = 0; i < rockCount; i++) {
+                const size = 3 + Math.random() * 6; // 3-9のサイズ
+                const geometry = new THREE.SphereGeometry(size, 6, 6);
+                const material = new THREE.MeshBasicMaterial({ 
+                    color: rockColor,
+                    transparent: true,
+                    opacity: 0.8
+                });
+                const rock = new THREE.Mesh(geometry, material);
+                
+                // 石をランダムに配置
+                rock.position.set(
+                    (Math.random() - 0.5) * 15,
+                    size - 5, // 地面に埋まるように
+                    (Math.random() - 0.5) * 10
+                );
+                
+                // 不規則な形にするため変形
+                rock.scale.set(
+                    0.8 + Math.random() * 0.4,
+                    0.6 + Math.random() * 0.8,
+                    0.8 + Math.random() * 0.4
+                );
+                
+                rockGroup.add(rock);
+            }
+            
+            // 位置設定
+            const spawnX = x !== null ? x : 
+                GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.ROCK_SPAWN_DISTANCE + 
+                (Math.random() - 0.5) * 1600;
+            
+            rockGroup.position.set(
+                spawnX,
+                -90, // 地面の上に配置
+                (Math.random() - 0.5) * 80 // Z方向にランダム配置
+            );
+            
+            // 石のメタデータ
+            rockGroup.userData = {
+                type: 'rock',
+                rotationSpeed: (Math.random() - 0.5) * 0.005 // ゆっくりした回転
+            };
+            
+            scene.add(rockGroup);
+            rockElements.push(rockGroup);
+            
+            return rockGroup;
+        }
+
+        // 強化された環境エフェクトの更新処理
+        function updateEnvironmentEffects(deltaTime) {
+            // ゲーム時間の更新
+            gameTime += deltaTime * GAME_CONFIG.TIME_BASED_ANIMATION_SPEED;
+            
+            // 草の揺れアニメーション
+            updateGrassElements(deltaTime);
+            
+            // 花の更新
+            updateFlowerElements(deltaTime);
+            
+            // 石の更新
+            updateRockElements(deltaTime);
+            
+            // 雲の流れエフェクト（背景パーティクルの雲タイプに適用）
+            updateCloudFlowEffect(deltaTime);
+            
+            // プレイヤー変形エフェクト
+            updatePlayerDeformation(deltaTime);
+            
+            // コンボエフェクト
+            updateComboEffects(deltaTime);
+        }
+
+        // 草要素の更新
+        function updateGrassElements(deltaTime) {
+            for (let i = grassElements.length - 1; i >= 0; i--) {
+                const grass = grassElements[i];
+                
+                // 草の移動（左に移動）
+                grass.position.x -= GAME_CONFIG.SCROLL_SPEED;
+                
+                // 風による揺れアニメーション（コンボ強化対応）
+                const swayTime = gameTime + grass.userData.swayPhase;
+                const comboIntensity = grass.userData.comboIntensity || 1.0;
+                const swayAmount = Math.sin(swayTime * GAME_CONFIG.GRASS_SWAY_FREQUENCY) * GAME_CONFIG.GRASS_SWAY_AMPLITUDE * comboIntensity;
+                
+                // X軸回転で草を揺らす
+                grass.rotation.z = (swayAmount * Math.PI) / 180; // 度をラジアンに変換
+                
+                // 時間ベースの微細な動き
+                const environmentWave = Math.sin(gameTime * 2) * GAME_CONFIG.ENVIRONMENT_WAVE_AMPLITUDE * 0.1;
+                grass.position.y = -90 + GAME_CONFIG.GRASS_HEIGHT / 2 + environmentWave;
+                
+                // 画面外に出た草を削除して新しいものを生成
+                if (grass.position.x < GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.GRASS_DESTROY_DISTANCE) {
+                    scene.remove(grass);
+                    grassElements.splice(i, 1);
+                    
+                    // 新しい草を右端に生成
+                    createGrassElement(GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.GRASS_SPAWN_DISTANCE);
+                }
+            }
+        }
+
+        // 花要素の更新
+        function updateFlowerElements(deltaTime) {
+            for (let i = flowerElements.length - 1; i >= 0; i--) {
+                const flower = flowerElements[i];
+                
+                // 花の移動（左に移動）
+                flower.position.x -= GAME_CONFIG.SCROLL_SPEED;
+                
+                // 花の揺れアニメーション（草より軽やか）
+                const swayTime = gameTime + flower.userData.swayPhase;
+                const swayAmount = Math.sin(swayTime * GAME_CONFIG.GRASS_SWAY_FREQUENCY * 1.5) * GAME_CONFIG.GRASS_SWAY_AMPLITUDE * 0.5;
+                flower.rotation.z = (swayAmount * Math.PI) / 180;
+                
+                // 花の脈動エフェクト（色の明度変化）
+                flower.userData.pulsePhase += 0.05;
+                const pulseBrightness = 0.8 + Math.sin(flower.userData.pulsePhase) * 0.2;
+                
+                // 花の部分（最初の子要素）の色を更新
+                if (flower.children[0]) {
+                    const originalColor = new THREE.Color(flower.userData.originalColor);
+                    const brightColor = originalColor.clone().multiplyScalar(pulseBrightness);
+                    flower.children[0].material.color = brightColor;
+                }
+                
+                // 時間ベースの微細な動き
+                const environmentWave = Math.sin(gameTime * 1.5) * GAME_CONFIG.ENVIRONMENT_WAVE_AMPLITUDE * 0.05;
+                flower.position.y = -90 + environmentWave;
+                
+                // 画面外に出た花を削除して新しいものを生成
+                if (flower.position.x < GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.FLOWER_DESTROY_DISTANCE) {
+                    scene.remove(flower);
+                    flowerElements.splice(i, 1);
+                    
+                    // 新しい花を右端に生成
+                    createFlowerElement(GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.FLOWER_SPAWN_DISTANCE);
+                }
+            }
+        }
+
+        // 石要素の更新
+        function updateRockElements(deltaTime) {
+            for (let i = rockElements.length - 1; i >= 0; i--) {
+                const rock = rockElements[i];
+                
+                // 石の移動（左に移動）
+                rock.position.x -= GAME_CONFIG.SCROLL_SPEED;
+                
+                // 石のゆっくりした回転
+                rock.rotation.y += rock.userData.rotationSpeed;
+                
+                // 画面外に出た石を削除して新しいものを生成
+                if (rock.position.x < GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.ROCK_DESTROY_DISTANCE) {
+                    scene.remove(rock);
+                    rockElements.splice(i, 1);
+                    
+                    // 新しい石を右端に生成
+                    createRockElement(GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.ROCK_SPAWN_DISTANCE);
+                }
+            }
+        }
+
+        // 雲の流れエフェクト
+        function updateCloudFlowEffect(deltaTime) {
+            // 背景パーティクルの雲タイプに流れエフェクトを適用
+            for (let layer = 0; layer < 4; layer++) {
+                for (const particle of backgroundParticles[layer]) {
+                    if (particle.userData.type === 'cloud') {
+                        // 雲の縦方向の流れ
+                        const flowTime = gameTime + particle.position.x * 0.001; // 位置に応じた位相差
+                        const flowOffset = Math.sin(flowTime * GAME_CONFIG.CLOUD_FLOW_FREQUENCY) * GAME_CONFIG.CLOUD_FLOW_AMPLITUDE;
+                        
+                        // 元の位置からのオフセットを適用
+                        if (!particle.userData.baseY) {
+                            particle.userData.baseY = particle.position.y;
+                        }
+                        particle.position.y = particle.userData.baseY + flowOffset;
+                        
+                        // 雲の形状変化（スケール変化）
+                        const scaleVariation = 1 + Math.sin(flowTime * 0.5) * 0.1;
+                        particle.scale.set(scaleVariation, 1, scaleVariation);
+                    }
+                }
+            }
+        }
+
+        // 地面反応エフェクト作成
+        function createGroundReactionEffect(x, y, z) {
+            for (let i = 0; i < GAME_CONFIG.GROUND_REACTION_PARTICLE_COUNT; i++) {
+                const angle = (i / GAME_CONFIG.GROUND_REACTION_PARTICLE_COUNT) * Math.PI * 2;
+                const speed = GAME_CONFIG.GROUND_REACTION_SPEED * (0.5 + Math.random() * 0.5);
+                
+                const velocityX = Math.cos(angle) * speed * 0.3;
+                const velocityY = Math.random() * speed * 0.8 + speed * 0.2;
+                const velocityZ = Math.sin(angle) * speed * 0.2;
+                
+                // 地面の色に近い茶色のパーティクル
+                const dustColor = 0x8B4513; // 茶色
+                createSmallParticle(x, y, z, dustColor, velocityX, velocityY, velocityZ);
+            }
+        }
+
+        // 小さなパーティクル作成（地面反応用）
+        function createSmallParticle(x, y, z, color = 0x8B4513, velocityX = 0, velocityY = 0, velocityZ = 0) {
+            const geometry = new THREE.SphereGeometry(GAME_CONFIG.GROUND_REACTION_PARTICLE_SIZE, 4, 4);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: color,
+                transparent: true,
+                opacity: 0.8
+            });
+            const particle = new THREE.Mesh(geometry, material);
+            
+            particle.position.set(x, y, z);
+            particle.userData = {
+                velocity: new THREE.Vector3(velocityX, velocityY, velocityZ),
+                life: 1.0,
+                maxLife: 1.0,
+                gravity: GAME_CONFIG.PARTICLE_GRAVITY * 1.5, // 少し重い
+                type: 'ground_reaction'
+            };
+            
+            scene.add(particle);
+            particles.push(particle);
+            
+            return particle;
+        }
+
+        // プレイヤー変形エフェクトの更新
+        function updatePlayerDeformation(deltaTime) {
+            // 時間の更新
+            playerState.deformTime += deltaTime * GAME_CONFIG.PLAYER_DEFORM_SPEED;
+            
+            // 着地時の変形
+            if (playerState.isLanding) {
+                playerState.landingTime += deltaTime * 0.1;
+                
+                // 着地時のスカッシュエフェクト（縦に縮む）
+                const squashProgress = Math.min(playerState.landingTime, 1.0);
+                const squashAmount = Math.sin(squashProgress * Math.PI) * (1 - GAME_CONFIG.PLAYER_LANDING_SQUASH);
+                
+                player.scale.y = 1 - squashAmount;
+                player.scale.x = 1 + squashAmount * 0.5; // 横に少し広がる
+                player.scale.z = 1 + squashAmount * 0.5;
+                
+                // エフェクト終了
+                if (playerState.landingTime >= 1.0) {
+                    playerState.isLanding = false;
+                    playerState.landingTime = 0;
+                    player.scale.set(1, 1, 1); // 元に戻す
+                }
+            }
+            
+            // ジャンプ時の変形
+            else if (playerState.isJumping) {
+                playerState.jumpTime += deltaTime * 0.1;
+                
+                // ジャンプ時のストレッチエフェクト（縦に伸びる）
+                const stretchProgress = Math.min(playerState.jumpTime, 1.0);
+                const stretchAmount = Math.sin(stretchProgress * Math.PI) * (GAME_CONFIG.PLAYER_JUMP_STRETCH - 1);
+                
+                player.scale.y = 1 + stretchAmount;
+                player.scale.x = 1 - stretchAmount * 0.3; // 横に少し縮む
+                player.scale.z = 1 - stretchAmount * 0.3;
+                
+                // エフェクト終了
+                if (playerState.jumpTime >= 1.0) {
+                    playerState.isJumping = false;
+                    playerState.jumpTime = 0;
+                    player.scale.set(1, 1, 1); // 元に戻す
+                }
+            }
+            
+            // 通常時の微細な変形（呼吸のような効果）
+            else {
+                const breatheAmount = Math.sin(playerState.deformTime) * GAME_CONFIG.PLAYER_DEFORM_AMPLITUDE;
+                player.scale.y = 1 + breatheAmount * 0.1;
+                player.scale.x = 1 - breatheAmount * 0.05;
+                player.scale.z = 1 - breatheAmount * 0.05;
+            }
+        }
+
+        // コンボ特別パーティクル作成
+        function createComboSpecialParticle(x, y, z, comboLevel) {
+            // コンボレベルに応じた色
+            let color;
+            if (comboLevel >= GAME_CONFIG.COMBO_INTENSE_THRESHOLD) {
+                color = 0xff0080; // ピンク（激しいコンボ）
+            } else if (comboLevel >= GAME_CONFIG.COMBO_PARTICLE_THRESHOLD) {
+                color = 0x00ffff; // シアン（高コンボ）
+            } else {
+                color = 0xffff00; // 黄色（通常コンボ）
+            }
+            
+            for (let i = 0; i < GAME_CONFIG.COMBO_SPECIAL_PARTICLE_COUNT; i++) {
+                const angle = (i / GAME_CONFIG.COMBO_SPECIAL_PARTICLE_COUNT) * Math.PI * 2;
+                const speed = 6 + comboLevel * 0.5; // コンボレベルに応じて速度増加
+                
+                const velocityX = Math.cos(angle) * speed * 0.4;
+                const velocityY = Math.sin(angle) * speed * 0.4 + speed * 0.3;
+                const velocityZ = (Math.random() - 0.5) * speed * 0.3;
+                
+                createSpecialParticle(x, y, z, color, velocityX, velocityY, velocityZ, comboLevel);
+            }
+        }
+
+        // 特別パーティクル作成（コンボ用）
+        function createSpecialParticle(x, y, z, color, velocityX = 0, velocityY = 0, velocityZ = 0, comboLevel = 1) {
+            const geometry = new THREE.SphereGeometry(GAME_CONFIG.COMBO_SPECIAL_PARTICLE_SIZE, 6, 6);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: color,
+                transparent: true,
+                opacity: 0.9
+            });
+            const particle = new THREE.Mesh(geometry, material);
+            
+            particle.position.set(x, y, z);
+            particle.userData = {
+                velocity: new THREE.Vector3(velocityX, velocityY, velocityZ),
+                life: 1.5, // 通常より長い寿命
+                maxLife: 1.5,
+                gravity: GAME_CONFIG.PARTICLE_GRAVITY * 0.5, // 軽い
+                type: 'combo_special',
+                comboLevel: comboLevel,
+                rotationSpeed: (Math.random() - 0.5) * 0.2
+            };
+            
+            scene.add(particle);
+            particles.push(particle);
+            
+            return particle;
+        }
+
+        // コンボエフェクトの更新
+        function updateComboEffects(deltaTime) {
+            const combo = gameState.combo;
+            
+            // 高コンボ時の背景加速
+            if (combo >= GAME_CONFIG.COMBO_PARTICLE_THRESHOLD) {
+                const speedMultiplier = 1 + (combo - GAME_CONFIG.COMBO_PARTICLE_THRESHOLD) * 0.1;
+                
+                // 背景パーティクルの速度を一時的に増加（4層対応）
+                for (let layer = 0; layer < 4; layer++) {
+                    for (const particle of backgroundParticles[layer]) {
+                        const baseSpeed = [
+                            GAME_CONFIG.BACKGROUND_LAYER1_SPEED,
+                            GAME_CONFIG.BACKGROUND_LAYER2_SPEED,
+                            GAME_CONFIG.BACKGROUND_LAYER3_SPEED,
+                            GAME_CONFIG.BACKGROUND_LAYER4_SPEED
+                        ][layer];
+                        
+                        particle.userData.speed = baseSpeed * Math.min(speedMultiplier, GAME_CONFIG.COMBO_BACKGROUND_SPEED_MULTIPLIER);
+                    }
+                }
+                
+                // 草の揺れも激しくする
+                for (const grass of grassElements) {
+                    const intensityMultiplier = 1 + combo * 0.05;
+                    // 揺れの振幅を増加（元の処理で使用される）
+                    grass.userData.comboIntensity = intensityMultiplier;
+                }
+            }
+            
+            // 激しいコンボ時のカメラ振動
+            if (combo >= GAME_CONFIG.COMBO_INTENSE_THRESHOLD) {
+                const shakeIntensity = Math.min((combo - GAME_CONFIG.COMBO_INTENSE_THRESHOLD) * 0.1, 1.0);
+                const shakeX = (Math.random() - 0.5) * GAME_CONFIG.COMBO_CAMERA_SHAKE_AMPLITUDE * shakeIntensity;
+                const shakeY = (Math.random() - 0.5) * GAME_CONFIG.COMBO_CAMERA_SHAKE_AMPLITUDE * shakeIntensity;
+                
+                camera.position.x = shakeX;
+                camera.position.y = 150 + shakeY;
+            } else {
+                // カメラ位置をリセット
+                camera.position.x = 0;
+                camera.position.y = 150;
+            }
+        }
+
+        // 波状攻撃パターン生成
+        function createWavePattern() {
+            const waveCount = 3 + Math.floor(gameState.difficultyLevel * 0.5);
+            const waveSpacing = 150;
+            
+            for (let i = 0; i < waveCount; i++) {
+                setTimeout(() => {
+                    const enemy = createEnemy('ground');
+                    if (enemy) {
+                        enemy.position.x = GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.SPAWN_DISTANCE + (i * waveSpacing);
+                        enemy.userData.speed = gameState.currentEnemySpeed * gameState.adaptiveDifficultyMultiplier;
+                    }
+                }, i * 500); // 0.5秒間隔で生成
+            }
+        }
+
+        // フォーメーション攻撃パターン生成
+        function createFormationPattern() {
+            const formations = [
+                // V字フォーメーション
+                [{x: 0, y: 0}, {x: 100, y: 20}, {x: 200, y: 0}, {x: 300, y: 20}],
+                // 階段フォーメーション
+                [{x: 0, y: 0}, {x: 150, y: 30}, {x: 300, y: 60}, {x: 450, y: 30}],
+                // 挟み撃ちフォーメーション（地面+浮遊）
+                [{x: 0, y: 0, type: 'ground'}, {x: 200, y: 80, type: 'floating'}, {x: 400, y: 0, type: 'ground'}]
+            ];
+            
+            const selectedFormation = formations[Math.floor(Math.random() * formations.length)];
+            
+            selectedFormation.forEach((pos, index) => {
+                setTimeout(() => {
+                    const enemyType = pos.type || (Math.random() < 0.3 ? 'floating' : 'ground');
+                    const enemy = createEnemy(enemyType);
+                    if (enemy) {
+                        enemy.position.x = GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.SPAWN_DISTANCE + pos.x;
+                        if (enemyType === 'floating') {
+                            enemy.position.y = -90 + pos.y;
+                        }
+                        enemy.userData.speed = gameState.currentEnemySpeed * gameState.adaptiveDifficultyMultiplier;
+                    }
+                }, index * 300); // 0.3秒間隔で生成
+            });
+        }
+
+        // プレイヤースキル分析
+        function analyzePlayerSkill() {
+            const gameTime = Date.now() - start;
+            const gameTimeSeconds = gameTime / 1000;
+            
+            // スキル指標の計算
+            const survivalRate = gameState.lives / GAME_CONFIG.PLAYER_LIVES;
+            const defeatRate = gameState.totalEnemiesDefeated / Math.max(gameTimeSeconds / 10, 1); // 10秒あたりの撃破数
+            const comboEfficiency = gameState.maxCombo / Math.max(gameState.totalEnemiesDefeated, 1);
+            const damageAvoidanceRate = 1 - (gameState.totalDamagesTaken / Math.max(gameTimeSeconds / 5, 1)); // 5秒あたりのダメージ回避率
+            
+            // 総合スキルレベル計算
+            const newSkillLevel = (survivalRate * 0.3 + 
+                                 Math.min(defeatRate / 2, 1) * 0.3 + 
+                                 Math.min(comboEfficiency * 2, 1) * 0.2 + 
+                                 Math.max(damageAvoidanceRate, 0) * 0.2);
+            
+            // スキルレベルの平滑化
+            gameState.playerSkillLevel = gameState.playerSkillLevel * 0.7 + newSkillLevel * 0.3;
+            
+            // 適応難易度倍率の調整
+            const targetMultiplier = 0.8 + gameState.playerSkillLevel * 0.4; // 0.8-1.2の範囲
+            gameState.adaptiveDifficultyMultiplier = Math.max(0.5, Math.min(
+                gameState.adaptiveDifficultyMultiplier + 
+                (targetMultiplier - gameState.adaptiveDifficultyMultiplier) * GAME_CONFIG.ADAPTIVE_DIFFICULTY_SPEED,
+                GAME_CONFIG.MAX_ADAPTIVE_MULTIPLIER
+            ));
+        }
+
+        // 高度な難易度調整システム更新
+        function updateAdvancedDifficulty(currentTime) {
+            // 基本難易度調整（既存）
+            updateDifficulty(currentTime);
+            
+            // 高度なパターンは一定難易度以上で開始
+            if (gameState.difficultyLevel >= GAME_CONFIG.ADVANCED_PATTERN_THRESHOLD) {
+                // 波状攻撃パターン
+                if (currentTime - lastWavePatternTime > GAME_CONFIG.WAVE_PATTERN_INTERVAL) {
+                    createWavePattern();
+                    lastWavePatternTime = currentTime;
+                }
+                
+                // フォーメーション攻撃パターン
+                if (currentTime - lastFormationPatternTime > GAME_CONFIG.FORMATION_PATTERN_INTERVAL) {
+                    createFormationPattern();
+                    lastFormationPatternTime = currentTime;
+                }
+            }
+            
+            // プレイヤースキル分析
+            if (currentTime - lastSkillAnalysisTime > GAME_CONFIG.SKILL_ANALYSIS_INTERVAL) {
+                analyzePlayerSkill();
+                lastSkillAnalysisTime = currentTime;
+            }
+        }
+
+        // プラットフォーム上の敵作成関数
+        function createPlatformEnemy(platformX, platformY, platform) {
+            const geometry = new THREE.SphereGeometry(GAME_CONFIG.PLATFORM_ENEMY_SIZE, 8, 6);
+            const material = new THREE.MeshPhongMaterial({ 
+                color: GAME_CONFIG.PLATFORM_ENEMY_COLOR,
+                flatShading: true 
+            });
+            
+            const enemy = new THREE.Mesh(geometry, material);
+            
+            // プラットフォームの上面に配置
+            enemy.position.set(
+                platformX, 
+                platformY + GAME_CONFIG.FLOATING_PLATFORM_HEIGHT/2 + GAME_CONFIG.PLATFORM_ENEMY_SIZE + 5, 
+                0
+            );
+            
+            // 敵のメタデータ
+            enemy.userData = {
+                type: 'platform_enemy',
+                speed: GAME_CONFIG.SCROLL_SPEED,
+                canBeStomped: true,
+                defeated: false,
+                
+                // プラットフォーム上の敵特有の設定
+                parentPlatform: platform,
+                patrolDirection: Math.random() < 0.5 ? -1 : 1, // 初期巡回方向（左右）
+                patrolCenterX: platformX, // 巡回の中心X座標
+                patrolSpeed: GAME_CONFIG.PLATFORM_ENEMY_PATROL_SPEED,
+                patrolRange: GAME_CONFIG.PLATFORM_ENEMY_PATROL_RANGE,
+                
+                // バウンドアニメーション用
+                bounceTime: Math.random() * Math.PI * 2, // ランダムな初期位相
+                bounceSpeed: 0.1,
+                bounceHeight: GAME_CONFIG.PLATFORM_ENEMY_BOUNCE_HEIGHT,
+                baseY: enemy.position.y
+            };
+            
+            // プラットフォームと敵を関連付け
+            if (!platform.userData.enemies) {
+                platform.userData.enemies = [];
+            }
+            platform.userData.enemies.push(enemy);
+            
+            scene.add(enemy);
+            enemies.push(enemy);
+            
+            return enemy;
+        }
+
+        // 浮いている地面作成関数
+        function createFloatingPlatform(x, y) {
+            const geometry = new THREE.BoxGeometry(
+                GAME_CONFIG.FLOATING_PLATFORM_WIDTH,
+                GAME_CONFIG.FLOATING_PLATFORM_HEIGHT,
+                GAME_CONFIG.FLOATING_PLATFORM_DEPTH
+            );
+            
+            // 地面と少し異なる色で視認性を確保
+            const material = new THREE.MeshPhongMaterial({ 
+                color: 0x00ffff, // シアン色で高い視認性
+                flatShading: true 
+            });
+            
+            const platform = new THREE.Mesh(geometry, material);
+            platform.position.set(x, y, 0);
+            
+            // プラットフォームのメタデータ
+            platform.userData = {
+                type: 'floating_platform',
+                speed: GAME_CONFIG.SCROLL_SPEED,
+                isCollidable: true,
+                enemies: [] // このプラットフォーム上の敵のリスト
+            };
+            
+            scene.add(platform);
+            floatingPlatforms.push(platform);
+            
+            // 確率的に敵を配置
+            if (Math.random() < GAME_CONFIG.PLATFORM_ENEMY_SPAWN_CHANCE) {
+                createPlatformEnemy(x, y, platform);
+            }
+            
+            return platform;
+        }
+
+        // 浮いている地面のスポーン管理
+        function spawnFloatingPlatforms(currentTime) {
+            if (currentTime - lastPlatformSpawnTime > GAME_CONFIG.FLOATING_PLATFORM_SPAWN_INTERVAL) {
+                // ランダムな高さで浮いている地面を生成
+                const minHeight = GAME_CONFIG.FLOATING_PLATFORM_MIN_HEIGHT;
+                const maxHeight = GAME_CONFIG.FLOATING_PLATFORM_MAX_HEIGHT;
+                const randomHeight = minHeight + Math.random() * (maxHeight - minHeight);
+                
+                const spawnX = GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.FLOATING_PLATFORM_SPAWN_DISTANCE;
+                const spawnY = -70 + randomHeight; // 地面（Y=-90）より上に確実に配置
+                
+                createFloatingPlatform(spawnX, spawnY);
+                lastPlatformSpawnTime = currentTime;
+            }
+        }
+
+        // 浮いている地面の更新処理
+        function updateFloatingPlatforms(deltaTime) {
+            for (let i = floatingPlatforms.length - 1; i >= 0; i--) {
+                const platform = floatingPlatforms[i];
+                
+                // プラットフォームの移動（左に移動）
+                platform.position.x -= platform.userData.speed;
+                
+                // 画面外に出たプラットフォームを削除
+                if (platform.position.x < GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.FLOATING_PLATFORM_DESTROY_DISTANCE) {
+                    // プラットフォーム上の敵も一緒に削除
+                    if (platform.userData.enemies && platform.userData.enemies.length > 0) {
+                        // 逆順で削除して配列のインデックス問題を回避
+                        for (let j = platform.userData.enemies.length - 1; j >= 0; j--) {
+                            const enemy = platform.userData.enemies[j];
+                            if (enemy && scene.children.includes(enemy)) {
+                                const enemyIndex = enemies.indexOf(enemy);
+                                if (enemyIndex !== -1) {
+                                    scene.remove(enemy);
+                                    enemies.splice(enemyIndex, 1);
+                                }
+                            }
+                        }
+                        platform.userData.enemies = []; // 配列をクリア
+                    }
+                    
+                    scene.remove(platform);
+                    floatingPlatforms.splice(i, 1);
+                    continue;
+                }
+                
+                // プレイヤーとの当たり判定（上からの着地のみ）
+                const landedOnPlatform = checkPlatformCollision(platform);
+                if (landedOnPlatform) {
+                    // 着地した場合、このプラットフォームをマーク
+                    platform.userData.playerLanded = true;
+                    platform.userData.lastLandedTime = Date.now();
+                } else {
+                    // 着地していない場合、少し時間をおいてからフラグをリセット（安定化のため）
+                    if (platform.userData.lastLandedTime && 
+                        Date.now() - platform.userData.lastLandedTime > 50) { // 50ms後にリセット
+                        platform.userData.playerLanded = false;
+                    }
+                }
+            }
+        }
+
+        // プラットフォームとの衝突判定（レイキャスト方式）
+        function checkPlatformCollision(platform) {
+            // プレイヤーの足元から下向きにレイを飛ばす
+            const rayOrigin = new THREE.Vector3(player.position.x, player.position.y - 18, player.position.z);
+            const rayDirection = new THREE.Vector3(0, -1, 0); // 下向き
+            const rayDistance = Math.abs(playerState.velocityY) + 40; // 落下速度 + 余裕
+            
+            const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, rayDistance);
+            const intersects = raycaster.intersectObject(platform);
+            
+            if (intersects.length > 0 && playerState.velocityY <= 0) {
+                const intersection = intersects[0];
+                const platformTop = intersection.point.y;
+                
+                // プレイヤーがプラットフォームの上面近くにいる場合（寛容な判定）
+                if (player.position.y - 22 <= platformTop + 15) {
+                    // 着地エフェクトをトリガー（初回着地時のみ）
+                    if (!playerState.isGrounded) {
+                        createGroundReactionEffect(player.position.x, platformTop, player.position.z);
+                        playerState.isLanding = true;
+                        playerState.landingTime = 0;
+                    }
+                    
+                    // プラットフォームに着地
+                    player.position.y = platformTop + 25; // プレイヤーの半径分上に配置
+                    playerState.velocityY = 0;
+                    playerState.isGrounded = true;
+                    playerState.jumpCount = 0;
+                    
+                    // 着地エフェクト
+                    createJumpEffect(player.position.x, player.position.y - 20, player.position.z);
+                    
+                    return true; // 着地成功
+                }
+            }
+            
+            return false; // 着地しなかった
+        }
+
+        // 敵キャラクター作成関数
+        function createEnemy(type = 'ground_walking') {
+            let enemy;
+            
+            if (type === 'ground_walking' || type === 'ground') {
+                // 踏める敵（地面を歩く敵）
+                const geometry = new THREE.BoxGeometry(
+                    GAME_CONFIG.ENEMY_SIZE, 
+                    GAME_CONFIG.ENEMY_SIZE, 
+                    GAME_CONFIG.ENEMY_SIZE
+                );
+                const material = new THREE.MeshPhongMaterial({ 
+                    color: GAME_CONFIG.ENEMY_GROUND_WALKING_COLOR,
+                    flatShading: true 
+                });
+                enemy = new THREE.Mesh(geometry, material);
+                
+                // 地面の上に配置
+                enemy.position.set(
+                    GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.ENEMY_SPAWN_DISTANCE,
+                    -80, // 地面の高さ
+                    0
+                );
+                
+                // 敵の種類とプロパティを設定
+                enemy.userData = {
+                    type: 'ground_walking',
+                    speed: GAME_CONFIG.ENEMY_SPEED,
+                    health: 1,
+                    defeated: false,
+                    canBeStomped: true // 踏んで倒せる
+                };
+            } else if (type === 'floating') {
+                // 浮いている敵
+                const geometry = new THREE.SphereGeometry(GAME_CONFIG.FLOATING_ENEMY_SIZE, 8, 6);
+                const material = new THREE.MeshPhongMaterial({ 
+                    color: GAME_CONFIG.FLOATING_ENEMY_COLOR,
+                    flatShading: true 
+                });
+                enemy = new THREE.Mesh(geometry, material);
+                
+                // ランダムな高さで配置
+                const minHeight = GAME_CONFIG.FLOATING_ENEMY_MIN_HEIGHT;
+                const maxHeight = GAME_CONFIG.FLOATING_ENEMY_MAX_HEIGHT;
+                const randomHeight = minHeight + Math.random() * (maxHeight - minHeight);
+                const baseY = -70 + randomHeight; // 地面（Y=-90）より上に配置
+                
+                enemy.position.set(
+                    GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.ENEMY_SPAWN_DISTANCE,
+                    baseY,
+                    0
+                );
+                
+                // 浮いている敵の特別なプロパティ
+                enemy.userData = {
+                    type: 'floating',
+                    speed: GAME_CONFIG.FLOATING_ENEMY_SPEED,
+                    health: 1,
+                    defeated: false,
+                    canBeStomped: true, // 踏んで倒せる
+                    baseY: baseY, // 基準Y座標
+                    waveTime: Math.random() * Math.PI * 2, // サイン波の初期位相をランダム化
+                    amplitude: GAME_CONFIG.FLOATING_ENEMY_WAVE_AMPLITUDE,
+                    frequency: GAME_CONFIG.FLOATING_ENEMY_WAVE_FREQUENCY
+                };
+            } else if (type === 'high_floating') {
+                // 高高度浮遊敵
+                const geometry = new THREE.SphereGeometry(GAME_CONFIG.HIGH_FLOATING_ENEMY_SIZE, 8, 6);
+                const material = new THREE.MeshPhongMaterial({ 
+                    color: GAME_CONFIG.HIGH_FLOATING_ENEMY_COLOR,
+                    flatShading: true 
+                });
+                enemy = new THREE.Mesh(geometry, material);
+                
+                // 高い位置で配置（画面中央やや上）
+                const minHeight = GAME_CONFIG.HIGH_FLOATING_ENEMY_MIN_HEIGHT;
+                const maxHeight = GAME_CONFIG.HIGH_FLOATING_ENEMY_MAX_HEIGHT;
+                const randomHeight = minHeight + Math.random() * (maxHeight - minHeight);
+                const baseY = -70 + randomHeight; // 地面（Y=-90）より高い位置に配置
+                
+                enemy.position.set(
+                    GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.ENEMY_SPAWN_DISTANCE,
+                    baseY,
+                    0
+                );
+                
+                // 高高度浮遊敵の特別なプロパティ
+                enemy.userData = {
+                    type: 'high_floating',
+                    speed: GAME_CONFIG.HIGH_FLOATING_ENEMY_SPEED,
+                    health: 1,
+                    defeated: false,
+                    canBeStomped: true, // 踏んで倒せる
+                    baseY: baseY, // 基準Y座標
+                    waveTime: Math.random() * Math.PI * 2, // サイン波の初期位相をランダム化
+                    amplitude: GAME_CONFIG.HIGH_FLOATING_ENEMY_WAVE_AMPLITUDE,
+                    frequency: GAME_CONFIG.HIGH_FLOATING_ENEMY_WAVE_FREQUENCY,
+                    // 高高度浮遊敵特有のプロパティ
+                    rotationSpeed: 0.02 + Math.random() * 0.02, // ランダムな回転速度
+                    pulseTime: Math.random() * Math.PI * 2, // 脈動エフェクト用
+                    pulseSpeed: 0.05,
+                    pulseAmplitude: 0.2
+                };
+            } else {
+                console.warn(`Unknown enemy type: ${type}, defaulting to ground_walking`);
+                return createEnemy('ground_walking');
+            }
+            
+            // 敵が正常に作成されたかチェック
+            if (!enemy) {
+                console.error(`Failed to create enemy of type: ${type}`);
+                return null;
+            }
+            
+            scene.add(enemy);
+            enemies.push(enemy);
+            
+            return enemy;
+        }
+
+        // 敵スポーン管理
+        function spawnEnemies(currentTime) {
+            if (currentTime - lastEnemySpawnTime > gameState.currentSpawnInterval) {
+                // 踏める敵をスポーン
+                const enemy = createEnemy('ground_walking');
+                // 現在の難易度に応じて敵の速度を設定
+                enemy.userData.speed = gameState.currentEnemySpeed;
+                lastEnemySpawnTime = currentTime;
+            }
+        }
+
+        // 浮いている敵のスポーン管理
+        function spawnFloatingEnemies(currentTime) {
+            if (currentTime - lastFloatingEnemySpawnTime > GAME_CONFIG.FLOATING_ENEMY_SPAWN_INTERVAL) {
+                const floatingEnemy = createEnemy('floating');
+                if (!floatingEnemy) {
+                    console.warn('Failed to create floating enemy');
+                }
+                lastFloatingEnemySpawnTime = currentTime;
+            }
+        }
+
+        // 高高度浮遊敵のスポーン管理
+        function spawnHighFloatingEnemies(currentTime) {
+            if (currentTime - lastHighFloatingEnemySpawnTime > GAME_CONFIG.HIGH_FLOATING_ENEMY_SPAWN_INTERVAL) {
+                // 確率的に高高度浮遊敵を生成
+                if (Math.random() < GAME_CONFIG.HIGH_FLOATING_ENEMY_SPAWN_CHANCE) {
+                    const highFloatingEnemy = createEnemy('high_floating');
+                    if (!highFloatingEnemy) {
+                        console.warn('Failed to create high floating enemy');
+                    }
+                }
+                lastHighFloatingEnemySpawnTime = currentTime;
+            }
+        }
+
+        function setupEventListeners() {
+            // ジャンプ操作
+            document.addEventListener('keydown', (event) => {
+                if (event.code === 'Space') {
+                    event.preventDefault();
+                    jump();
+                }
+            });
+
+            document.addEventListener('click', jump);
+            document.addEventListener('touchstart', (event) => {
+                event.preventDefault();
+                jump();
+            });
+
+            // リスタートボタン
+            restartBtn.addEventListener('click', restartGame);
+
+            // リサイズ処理
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function jump() {
+            if (!gameState.isRunning) return;
+            
+            if (playerState.jumpCount < playerState.maxJumps) {
+                playerState.velocityY = GAME_CONFIG.PLAYER_JUMP_FORCE;
+                playerState.jumpCount++;
+                playerState.isGrounded = false;
+                
+                // ジャンプエフェクト
+                createJumpEffect(player.position.x, player.position.y - 20, player.position.z);
+                
+                // プレイヤー変形エフェクト（ジャンプ時）
+                playerState.isJumping = true;
+                playerState.jumpTime = 0;
+                playerState.isLanding = false; // 着地エフェクトをリセット
+                
+                // スキル分析用：ジャンプ回数追跡
+                gameState.totalJumps++;
+            }
+        }
+
+        function updatePlayer(deltaTime) {
+            // 重力適用
+            playerState.velocityY -= GAME_CONFIG.PLAYER_GRAVITY;
+            player.position.y += playerState.velocityY;
+
+            // 地面との衝突判定
+            const groundY = -90; // 表面層の上面
+            if (player.position.y <= groundY) {
+                // 着地エフェクトをトリガー（初回着地時のみ）
+                if (!playerState.isGrounded) {
+                    createGroundReactionEffect(player.position.x, player.position.y - 25, player.position.z);
+                    playerState.isLanding = true;
+                    playerState.landingTime = 0;
+                }
+                
+                player.position.y = groundY;
+                playerState.velocityY = 0;
+                playerState.isGrounded = true;
+                playerState.jumpCount = 0; // 地面着地時は必ずリセット
+                
+                // スマホ対応：地面にいる間も確実にリセット
+                if (Math.abs(playerState.velocityY) < 2) {
+                    playerState.jumpCount = 0;
+                }
+            } else {
+                // 地面より上にいる場合、浮いている地面にいるかチェック
+                let onFloatingPlatform = false;
+                let platformLandedThisFrame = false;
+                
+                for (const platform of floatingPlatforms) {
+                    // レイキャストで着地判定された場合
+                    if (platform.userData && platform.userData.playerLanded) {
+                        onFloatingPlatform = true;
+                        
+                        // プラットフォームに新しく着地した場合の判定を強化
+                        if (!playerState.isGrounded) {
+                            platformLandedThisFrame = true;
+                        }
+                        break;
+                    }
+                }
+                
+                // プラットフォームに着地した瞬間のジャンプカウントリセット（スマホ対応強化）
+                if (platformLandedThisFrame) {
+                    playerState.jumpCount = 0;
+                    playerState.isGrounded = true;
+                } else if (onFloatingPlatform) {
+                    playerState.isGrounded = true;
+                    // プラットフォーム上にいる間は常にジャンプカウントをリセット（スマホ安定化）
+                    if (playerState.jumpCount > 0 && Math.abs(playerState.velocityY) < 5) {
+                        playerState.jumpCount = 0;
+                    }
+                } else {
+                    // 浮いている地面の上にもいない場合は空中
+                    playerState.isGrounded = false;
+                }
+            }
+
+            // プレイヤー回転アニメーション
+            const timer = Date.now() - start;
+            player.rotation.x = timer * 0.003 * GAME_CONFIG.PLAYER_ROTATION_SPEED;
+            player.rotation.z = timer * 0.002 * GAME_CONFIG.PLAYER_ROTATION_SPEED;
+
+            // 無敵時間管理
+            if (gameState.isInvincible) {
+                gameState.invincibleTime -= deltaTime;
+                if (gameState.invincibleTime <= 0) {
+                    gameState.isInvincible = false;
+                }
+            }
+        }
+
+        function updateGround() {
+            // グローバルオフセットを更新（整数単位でスクロール）
+            const scrollSpeed = Math.floor(GAME_CONFIG.SCROLL_SPEED); // 整数に丸める
+            globalOffset += scrollSpeed;
+            
+            // セグメント長を超えたらラップ
+            if (globalOffset >= 6000) {
+                globalOffset -= 6000;
+            }
+
+            // 各地面セグメントの位置を再計算
+            groundLayers.forEach((layer) => {
+                const initialX = layer.userData.initialX;
+                layer.position.x = initialX - globalOffset;
+            });
+        }
+
+        // 敵更新処理
+        function updateEnemies(deltaTime) {
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                
+                // 敵が無効または削除済みの場合はスキップ
+                if (!enemy || !enemy.userData || enemy.userData.defeated) {
+                    continue;
+                }
+                
+                // 敵の移動（左に移動）
+                enemy.position.x -= enemy.userData.speed;
+                
+                // 敵タイプ別の特別な動作
+                if (enemy.userData.type === 'floating') {
+                    // サイン波による上下移動
+                    enemy.userData.waveTime += enemy.userData.frequency;
+                    const waveOffset = Math.sin(enemy.userData.waveTime) * enemy.userData.amplitude;
+                    enemy.position.y = enemy.userData.baseY + waveOffset;
+                    
+                    // 浮いている敵の回転アニメーション（3軸回転）
+                    enemy.rotation.x += 0.03;
+                    enemy.rotation.y += 0.02;
+                    enemy.rotation.z += 0.01;
+                } else if (enemy.userData.type === 'high_floating') {
+                    // 高高度浮遊敵の特別な動作
+                    
+                    // より大きなサイン波による上下移動
+                    enemy.userData.waveTime += enemy.userData.frequency;
+                    const waveOffset = Math.sin(enemy.userData.waveTime) * enemy.userData.amplitude;
+                    enemy.position.y = enemy.userData.baseY + waveOffset;
+                    
+                    // 特別な回転アニメーション（より複雑な回転）
+                    enemy.rotation.x += enemy.userData.rotationSpeed;
+                    enemy.rotation.y += enemy.userData.rotationSpeed * 1.5;
+                    enemy.rotation.z += enemy.userData.rotationSpeed * 0.8;
+                    
+                    // 脈動エフェクト（サイズが変化）
+                    enemy.userData.pulseTime += enemy.userData.pulseSpeed;
+                    const pulseScale = 1.0 + Math.sin(enemy.userData.pulseTime) * enemy.userData.pulseAmplitude;
+                    enemy.scale.set(pulseScale, pulseScale, pulseScale);
+                    
+                    // 色の脈動エフェクト（明度が変化）
+                    const pulseBrightness = 0.7 + Math.sin(enemy.userData.pulseTime * 2) * 0.3;
+                    enemy.material.emissive.setHex(0x332266);
+                    enemy.material.emissiveIntensity = pulseBrightness * 0.3;
+                } else if (enemy.userData.type === 'platform_enemy') {
+                    // プラットフォーム上の敵の特別な動作
+                    const platform = enemy.userData.parentPlatform;
+                    
+                    // プラットフォームが削除されていたら敵も削除
+                    if (!platform || !scene.children.includes(platform) || !floatingPlatforms.includes(platform)) {
+                        // プラットフォームの敵リストからも削除（安全性チェック）
+                        if (platform && platform.userData && platform.userData.enemies) {
+                            const platformEnemyIndex = platform.userData.enemies.indexOf(enemy);
+                            if (platformEnemyIndex !== -1) {
+                                platform.userData.enemies.splice(platformEnemyIndex, 1);
+                            }
+                        }
+                        // 敵を安全に削除
+                        if (enemy.parent) {
+                            scene.remove(enemy);
+                        }
+                        enemies.splice(i, 1);
+                        continue;
+                    }
+                    
+                    // プラットフォームと一緒に移動（X座標はスクロールで更新される）
+                    // Y座標はプラットフォームの上面に固定
+                    const platformTop = platform.position.y + GAME_CONFIG.FLOATING_PLATFORM_HEIGHT/2;
+                    
+                    // 巡回動作
+                    const currentRelativeX = enemy.position.x - platform.position.x;
+                    const maxPatrolDistance = enemy.userData.patrolRange / 2;
+                    
+                    // 巡回範囲の端に達したら方向転換
+                    if (Math.abs(currentRelativeX) >= maxPatrolDistance) {
+                        enemy.userData.patrolDirection *= -1;
+                    }
+                    
+                    // 巡回移動（プラットフォーム相対座標で移動）
+                    const patrolMovement = enemy.userData.patrolDirection * enemy.userData.patrolSpeed;
+                    enemy.position.x += patrolMovement;
+                    
+                    // バウンドアニメーション
+                    enemy.userData.bounceTime += enemy.userData.bounceSpeed;
+                    const bounceOffset = Math.sin(enemy.userData.bounceTime) * enemy.userData.bounceHeight;
+                    enemy.position.y = platformTop + GAME_CONFIG.PLATFORM_ENEMY_SIZE + 5 + bounceOffset;
+                    
+                    // 回転アニメーション（プラットフォーム上の敵）
+                    enemy.rotation.y += 0.05;
+                    enemy.rotation.x += 0.02;
+                } else {
+                    // 地面を歩く敵のアニメーション（Y軸回転のみ）
+                    enemy.rotation.y += 0.02;
+                }
+                
+                // 画面外に出た敵を削除
+                if (enemy.position.x < GAME_CONFIG.PLAYER_POSITION_X + GAME_CONFIG.ENEMY_DESTROY_DISTANCE) {
+                    // 敵を安全に削除
+                    if (enemy.parent) {
+                        scene.remove(enemy);
+                    }
+                    enemies.splice(i, 1);
+                    continue;
+                }
+                
+                // プレイヤーとの当たり判定
+                const distance = player.position.distanceTo(enemy.position);
+                let collisionDistance = 60; // デフォルト判定距離
+                
+                // 敵タイプ別の当たり判定距離調整
+                if (enemy.userData.type === 'floating') {
+                    collisionDistance = 50; // 浮いている敵は少し小さい判定
+                } else if (enemy.userData.type === 'high_floating') {
+                    collisionDistance = 55; // 高高度浮遊敵は少し大きい判定
+                } else if (enemy.userData.type === 'platform_enemy') {
+                    collisionDistance = 45; // プラットフォーム上の敵はさらに小さい判定
+                }
+                
+                if (distance < collisionDistance) {
+                    // プレイヤーが敵の上から踏んだかチェック
+                    const playerAboveEnemy = player.position.y > enemy.position.y + 10;
+                    const playerFalling = playerState.velocityY <= 0;
+                    
+                    if (playerAboveEnemy && playerFalling && enemy.userData.canBeStomped) {
+                        // 敵を踏んで倒す
+                        // 踏み潰しエフェクト
+                        createStompEffect(enemy.position.x, enemy.position.y, enemy.position.z);
+                        defeatEnemy(enemy);
+                        // プレイヤーを少し跳ね上げる
+                        playerState.velocityY = GAME_CONFIG.PLAYER_JUMP_FORCE * 0.5;
+                        // ジャンプ回数をリセット（連続ジャンプ可能に）
+                        playerState.jumpCount = 0;
+                    } else {
+                        // プレイヤーがダメージを受ける
+                        takeDamage();
+                    }
+                }
+            }
+        }
+
+        // 敵を倒す処理
+        function defeatEnemy(enemy) {
+            // 既に倒されている場合は処理しない
+            if (enemy.userData.defeated) {
+                return;
+            }
+            
+            enemy.userData.defeated = true;
+            
+            // 敵タイプ別の爆発エフェクト
+            if (enemy.userData.type === 'high_floating') {
+                // 高高度浮遊敵の特別な爆発エフェクト
+                createHighFloatingExplosion(enemy.position.x, enemy.position.y, enemy.position.z);
+            } else {
+                // 通常の爆発エフェクト
+                createExplosion(enemy.position.x, enemy.position.y, enemy.position.z);
+            }
+            
+            // 倒された敵の見た目を変更（色を薄く）
+            if (enemy.material) {
+                enemy.material.color.setHex(0x666666);
+                enemy.material.transparent = true;
+                enemy.material.opacity = 0.5;
+            }
+            
+            // コンボ更新
+            updateCombo();
+            
+            // コンボ特別パーティクル（高コンボ時のみ）
+            if (gameState.combo >= GAME_CONFIG.COMBO_PARTICLE_THRESHOLD) {
+                createComboSpecialParticle(enemy.position.x, enemy.position.y, enemy.position.z, gameState.combo);
+            }
+            
+            // スキル分析用：撃破数とコンボ追跡
+            gameState.totalEnemiesDefeated++;
+            gameState.maxCombo = Math.max(gameState.maxCombo, gameState.combo);
+            
+            // スコア加算（コンボ倍率適用）
+            const baseScore = GAME_CONFIG.ENEMY_DEFEAT_SCORE;
+            const finalScore = Math.floor(baseScore * gameState.comboMultiplier);
+            gameState.score += finalScore;
+            
+            // プラットフォーム上の敵の場合、親プラットフォームのリストからも削除
+            if (enemy.userData.type === 'platform_enemy' && enemy.userData.parentPlatform) {
+                const platform = enemy.userData.parentPlatform;
+                if (platform.userData.enemies) {
+                    const platformEnemyIndex = platform.userData.enemies.indexOf(enemy);
+                    if (platformEnemyIndex !== -1) {
+                        platform.userData.enemies.splice(platformEnemyIndex, 1);
+                    }
+                }
+            }
+            
+            // 敵を即座に配列から削除（エラー防止）
+            const index = enemies.indexOf(enemy);
+            if (index > -1) {
+                enemies.splice(index, 1);
+            }
+            
+            // 少し遅れてシーンから削除（視覚効果のため）
+            setTimeout(() => {
+                if (enemy.parent) {
+                    scene.remove(enemy);
+                }
+            }, 500);
+        }
+
+        // 難易度上昇システム
+        function updateDifficulty(currentTime) {
+            if (currentTime - gameState.lastDifficultyIncrease > GAME_CONFIG.DIFFICULTY_INCREASE_INTERVAL) {
+                if (gameState.difficultyLevel < GAME_CONFIG.MAX_DIFFICULTY_LEVEL) {
+                    gameState.difficultyLevel++;
+                    gameState.lastDifficultyIncrease = currentTime;
+                    
+                    // 敵の速度を上げる
+                    gameState.currentEnemySpeed += GAME_CONFIG.ENEMY_SPEED_INCREASE;
+                    
+                    // スポーン間隔を短くする
+                    gameState.currentSpawnInterval = Math.max(
+                        gameState.currentSpawnInterval - GAME_CONFIG.SPAWN_INTERVAL_DECREASE,
+                        GAME_CONFIG.MIN_SPAWN_INTERVAL
+                    );
+                }
+            }
+        }
+
+        // コンボシステム
+        function updateCombo() {
+            const currentTime = Date.now();
+            
+            // 前回の撃破から時間が経ちすぎていたらコンボリセット
+            if (currentTime - gameState.lastEnemyDefeatTime > GAME_CONFIG.COMBO_RESET_TIME) {
+                gameState.combo = 0;
+            }
+            
+            // コンボ増加
+            gameState.combo++;
+            gameState.lastEnemyDefeatTime = currentTime;
+            
+            // コンボ倍率計算
+            gameState.comboMultiplier = Math.min(
+                1.0 + (gameState.combo - 1) * (GAME_CONFIG.COMBO_MULTIPLIER_BASE - 1.0),
+                GAME_CONFIG.MAX_COMBO_MULTIPLIER
+            );
+        }
+
+        // コンボリセットチェック
+        function checkComboReset(currentTime) {
+            if (gameState.combo > 0 && 
+                currentTime - gameState.lastEnemyDefeatTime > GAME_CONFIG.COMBO_RESET_TIME) {
+                gameState.combo = 0;
+                gameState.comboMultiplier = 1.0;
+            }
+        }
+
+        function updateScore() {
+            gameState.score += GAME_CONFIG.SCORE_MULTIPLIER;
+            scoreElement.textContent = `SCORE: ${gameState.score}`;
+        }
+
+        function updateUI() {
+            // ライフ表示更新
+            livesElement.textContent = '♥'.repeat(gameState.lives);
+            
+            // 難易度表示更新
+            difficultyElement.textContent = `DIFFICULTY: ${gameState.difficultyLevel}`;
+            
+            
+            // コンボ表示更新
+            if (gameState.combo > 1) {
+                comboElement.textContent = `COMBO: ${gameState.combo} (x${gameState.comboMultiplier.toFixed(1)})`;
+                comboElement.style.display = 'block';
+            } else {
+                comboElement.style.display = 'none';
+            }
+        }
+
+        function takeDamage() {
+            if (gameState.isInvincible) return;
+
+            gameState.lives--;
+            gameState.isInvincible = true;
+            gameState.invincibleTime = GAME_CONFIG.DAMAGE_INVINCIBLE_TIME;
+
+            // スキル分析用：ダメージ追跡
+            gameState.totalDamagesTaken++;
+
+            updateUI();
+
+            if (gameState.lives <= 0) {
+                gameOver();
+            }
+        }
+
+        function gameOver() {
+            gameState.isRunning = false;
+            finalScoreElement.textContent = `FINAL SCORE: ${gameState.score}`;
+            gameOverElement.style.display = 'block';
+        }
+
+        function restartGame() {
+            // ゲーム状態リセット
+            gameState.isRunning = true;
+            gameState.score = 0;
+            gameState.lives = GAME_CONFIG.PLAYER_LIVES;
+            gameState.isInvincible = false;
+            gameState.invincibleTime = 0;
+            
+            // 難易度・コンボリセット
+            gameState.difficultyLevel = 1;
+            gameState.lastDifficultyIncrease = 0;
+            gameState.currentEnemySpeed = GAME_CONFIG.ENEMY_SPEED;
+            gameState.currentSpawnInterval = GAME_CONFIG.SPAWN_INTERVAL;
+            gameState.combo = 0;
+            gameState.comboMultiplier = 1.0;
+            gameState.lastEnemyDefeatTime = 0;
+            
+            // 動的難易度調整リセット
+            gameState.playerSkillLevel = 1.0;
+            gameState.adaptiveDifficultyMultiplier = 1.0;
+            gameState.totalEnemiesDefeated = 0;
+            gameState.totalJumps = 0;
+            gameState.totalDamagesTaken = 0;
+            gameState.averageCombo = 0;
+            gameState.maxCombo = 0;
+
+            // プレイヤー状態リセット
+            playerState.velocityY = 0;
+            playerState.isGrounded = false;
+            playerState.jumpCount = 0;
+            playerState.deformTime = 0;
+            playerState.isLanding = false;
+            playerState.landingTime = 0;
+            playerState.isJumping = false;
+            playerState.jumpTime = 0;
+
+            // プレイヤー位置リセット
+            player.position.set(
+                GAME_CONFIG.PLAYER_POSITION_X,
+                GAME_CONFIG.PLAYER_POSITION_Y,
+                0
+            );
+            
+            // プレイヤースケールリセット
+            player.scale.set(1, 1, 1);
+            
+            // カメラ位置リセット
+            camera.position.x = 0;
+            camera.position.y = 150;
+
+            // 敵をすべて削除
+            enemies.forEach(enemy => scene.remove(enemy));
+            enemies = [];
+            lastEnemySpawnTime = 0;
+            lastFloatingEnemySpawnTime = 0;
+            lastHighFloatingEnemySpawnTime = 0;
+            lastWavePatternTime = 0;
+            lastFormationPatternTime = 0;
+            lastSkillAnalysisTime = 0;
+
+            // 浮いている地面をすべて削除
+            floatingPlatforms.forEach(platform => scene.remove(platform));
+            floatingPlatforms = [];
+            lastPlatformSpawnTime = 0;
+
+            // パーティクルをすべて削除
+            particles.forEach(particle => scene.remove(particle));
+            particles = [];
+
+            // 背景パーティクルをすべて削除して再初期化（4層対応）
+            for (let layer = 0; layer < 4; layer++) {
+                if (backgroundParticles[layer]) {
+                    backgroundParticles[layer].forEach(particle => scene.remove(particle));
+                }
+            }
+            backgroundParticles = [];
+            initBackgroundParticles();
+
+            // 星座パターンをすべて削除
+            constellationPatterns.forEach(pattern => {
+                pattern.stars.forEach(star => scene.remove(star));
+            });
+            constellationPatterns = [];
+
+            // 流れ星をすべて削除
+            shootingStars.forEach(star => scene.remove(star));
+            shootingStars = [];
+            lastShootingStarTime = 0;
+
+            // 環境エフェクトをすべて削除して再初期化
+            grassElements.forEach(grass => scene.remove(grass));
+            grassElements = [];
+            
+            flowerElements.forEach(flower => scene.remove(flower));
+            flowerElements = [];
+            
+            rockElements.forEach(rock => scene.remove(rock));
+            rockElements = [];
+            
+            gameTime = 0;
+            initEnvironmentEffects();
+
+            // UI更新
+            updateUI();
+            gameOverElement.style.display = 'none';
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            effect.setSize(window.innerWidth, window.innerHeight);
+            
+            // 文字サイズを固定維持
+            effect.domElement.style.fontSize = '10px';
+            effect.domElement.style.lineHeight = '10px';
+        }
+
+        function animate() {
+            if (!gameState.isRunning) {
+                effect.render(scene, camera);
+                return;
+            }
+
+            const deltaTime = 16; // 約60fps想定
+            const currentTime = Date.now();
+
+            // ゲーム更新
+            updatePlayer(deltaTime);
+            updateGround();
+            spawnEnemies(currentTime); // 敵スポーン
+            spawnFloatingEnemies(currentTime); // 浮いている敵スポーン
+            spawnHighFloatingEnemies(currentTime); // 高高度浮遊敵スポーン
+            spawnFloatingPlatforms(currentTime); // 浮いている地面スポーン
+            updateEnemies(deltaTime); // 敵更新
+            updateFloatingPlatforms(deltaTime); // 浮いている地面更新
+            updateBackgroundParticles(deltaTime); // 背景パーティクル更新
+            updateEnvironmentEffects(deltaTime); // 環境エフェクト更新
+            updateParticles(deltaTime); // パーティクル更新
+            updateAdvancedDifficulty(currentTime); // 高度な難易度調整
+            checkComboReset(currentTime); // コンボリセットチェック
+            updateScore();
+            updateUI(); // UI更新
+
+            // レンダリング
+            effect.render(scene, camera);
+        }
+
+        // パーティクルシステム
+        function createParticle(x, y, z, color = 0xffff00, velocityX = 0, velocityY = 0, velocityZ = 0) {
+            const geometry = new THREE.SphereGeometry(GAME_CONFIG.PARTICLE_SIZE, 4, 4);
+            const material = new THREE.MeshBasicMaterial({ 
+                color: color,
+                transparent: true,
+                opacity: 1.0
+            });
+            const particle = new THREE.Mesh(geometry, material);
+            
+            particle.position.set(x, y, z);
+            particle.userData = {
+                velocity: new THREE.Vector3(velocityX, velocityY, velocityZ),
+                life: 1.0,
+                maxLife: 1.0,
+                gravity: GAME_CONFIG.PARTICLE_GRAVITY
+            };
+            
+            scene.add(particle);
+            particles.push(particle);
+            
+            return particle;
+        }
+
+        // 爆発エフェクト
+        function createExplosion(x, y, z, color = 0xff4444) {
+            for (let i = 0; i < GAME_CONFIG.EXPLOSION_PARTICLE_COUNT; i++) {
+                const angle = (i / GAME_CONFIG.EXPLOSION_PARTICLE_COUNT) * Math.PI * 2;
+                const speed = GAME_CONFIG.PARTICLE_SPEED * (0.5 + Math.random() * 0.5);
+                
+                const velocityX = Math.cos(angle) * speed;
+                const velocityY = Math.random() * speed * 0.8 + speed * 0.2;
+                const velocityZ = Math.sin(angle) * speed * 0.3;
+                
+                createParticle(x, y, z, color, velocityX, velocityY, velocityZ);
+            }
+        }
+
+        // 高高度浮遊敵用の特別な爆発エフェクト
+        function createHighFloatingExplosion(x, y, z) {
+            // 通常の爆発エフェクト
+            createExplosion(x, y, z, 0x9966ff);
+            
+            // 追加の特別なパーティクル（星型エフェクト）
+            for (let i = 0; i < 12; i++) {
+                const angle = (i / 12) * Math.PI * 2;
+                const speed = GAME_CONFIG.PARTICLE_SPEED * 1.2;
+                
+                const velocityX = Math.cos(angle) * speed;
+                const velocityY = Math.sin(angle) * speed * 0.5 + speed * 0.3;
+                const velocityZ = Math.sin(angle * 0.5) * speed * 0.4;
+                
+                const particle = createParticle(x, y, z, 0xffccff, velocityX, velocityY, velocityZ);
+                // 特別なパーティクルマーク
+                particle.userData.type = 'high_floating_special';
+                particle.userData.rotationSpeed = 0.1 + Math.random() * 0.1;
+            }
+        }
+
+        // ジャンプエフェクト
+        function createJumpEffect(x, y, z) {
+            for (let i = 0; i < GAME_CONFIG.JUMP_PARTICLE_COUNT; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = GAME_CONFIG.PARTICLE_SPEED * 0.3;
+                
+                const velocityX = Math.cos(angle) * speed;
+                const velocityY = Math.random() * speed * 0.5;
+                const velocityZ = Math.sin(angle) * speed;
+                
+                createParticle(x, y, z, 0x00ff00, velocityX, velocityY, velocityZ);
+            }
+        }
+
+        // 踏み潰しエフェクト
+        function createStompEffect(x, y, z) {
+            for (let i = 0; i < GAME_CONFIG.STOMP_PARTICLE_COUNT; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = GAME_CONFIG.PARTICLE_SPEED * 0.6;
+                
+                const velocityX = Math.cos(angle) * speed;
+                const velocityY = Math.random() * speed * 0.3 + speed * 0.2;
+                const velocityZ = Math.sin(angle) * speed * 0.5;
+                
+                createParticle(x, y, z, 0xffaa00, velocityX, velocityY, velocityZ);
+            }
+        }
+
+        // パーティクル更新
+        function updateParticles(deltaTime) {
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const particle = particles[i];
+                const userData = particle.userData;
+                
+                // 位置更新
+                particle.position.add(userData.velocity.clone().multiplyScalar(deltaTime * 0.1));
+                
+                // 重力適用
+                userData.velocity.y -= userData.gravity;
+                
+                // 特別パーティクルの特別な動作
+                if (userData.type === 'combo_special') {
+                    // 回転アニメーション
+                    particle.rotation.x += userData.rotationSpeed;
+                    particle.rotation.y += userData.rotationSpeed * 1.5;
+                    particle.rotation.z += userData.rotationSpeed * 0.5;
+                    
+                    // 色の脈動効果
+                    const pulse = Math.sin(Date.now() * 0.01) * 0.3 + 0.7;
+                    particle.material.opacity = pulse * (userData.life / userData.maxLife);
+                    
+                    // コンボレベルに応じたスケール変化
+                    const scaleVariation = 1 + Math.sin(Date.now() * 0.005) * 0.2;
+                    particle.scale.setScalar(scaleVariation);
+                } else if (userData.type === 'high_floating_special') {
+                    // 高高度浮遊敵の特別パーティクルの動作
+                    particle.rotation.x += userData.rotationSpeed;
+                    particle.rotation.y += userData.rotationSpeed * 2;
+                    particle.rotation.z += userData.rotationSpeed * 0.5;
+                    
+                    // 星のような輝きエフェクト
+                    const sparkle = Math.sin(Date.now() * 0.02) * 0.5 + 0.5;
+                    particle.material.opacity = sparkle * (userData.life / userData.maxLife);
+                    
+                    // スケール変化でキラキラ効果
+                    const sparkleScale = 1 + Math.sin(Date.now() * 0.03) * 0.3;
+                    particle.scale.setScalar(sparkleScale);
+                } else {
+                    // 通常パーティクルの透明度更新
+                    particle.material.opacity = userData.life / userData.maxLife;
+                }
+                
+                // ライフ減少
+                userData.life -= deltaTime * 0.002;
+                
+                // パーティクル削除
+                if (userData.life <= 0 || particle.position.y < -200) {
+                    scene.remove(particle);
+                    particles.splice(i, 1);
+                }
+            }
+        }
+    </script>
+</body>
+</html> 
